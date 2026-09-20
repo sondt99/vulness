@@ -3,7 +3,7 @@
 ## The short version
 
 ```bash
-git clone https://github.com/sondt99/s-ness && cd s-ness
+git clone https://github.com/sondt99/vulnnes && cd s-ness
 pip install -e ".[dev]"
 cp .env.example .env          # add your GLM key
 cp fleet.example.yaml fleet.yaml
