@@ -1,0 +1,53 @@
+name: False positive or false negative
+description: The harness confirmed something that is not a bug, or missed something that is
+labels: ["accuracy"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Accuracy reports are the most valuable issues this project receives.
+        They usually become regression tests, so please include enough to reproduce.
+
+        Reduce the case to code you are willing to publish. Do not paste proprietary source.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Which way did it fail
+      options:
+        - False positive (confirmed a non-bug)
+        - False negative (missed a real bug)
+    validations:
+      required: true
+
+  - type: textarea
+    id: snippet
+    attributes:
+      label: Minimal code
+      description: A reduced example that triggers the behaviour.
+      render: python
+    validations:
+      required: true
+
+  - type: textarea
+    id: ground-truth
+    attributes:
+      label: Ground truth
+      description: Why this is, or is not, a real boundary violation. Name the attacker and the boundary.
+    validations:
+      required: true
+
+  - type: textarea
+    id: record
+    attributes:
+      label: The finding record
+      description: "`sness findings --json` for the finding, including its validations."
+      render: json
+
+  - type: input
+    id: models
+    attributes:
+      label: Models used
+      placeholder: "hunt=sonnet, verify=glm-5.3"
+    validations:
+      required: true

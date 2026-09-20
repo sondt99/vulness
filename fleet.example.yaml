@@ -1,0 +1,15 @@
+profile: standard  # quick | standard | deep
+db_path: ./.sness/sness.db
+work_dir: ./.sness/work
+budget:
+  tasks_per_repo: 26
+  max_concurrent_agents: 6
+  max_concurrent_sandboxes: 3
+  validator_reserve_fraction: 0.30
+hunt:
+  model: sonnet
+  max_turns: 40
+  timeout_s: 900
+verify:
+  model: glm-5.3
+  timeout_s: 300

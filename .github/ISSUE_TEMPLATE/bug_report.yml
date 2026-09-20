@@ -1,0 +1,79 @@
+name: Bug report
+description: Something in the harness behaves incorrectly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste findings from a real audit. Use a reduced example instead.
+        Never include API keys, target source, or customer data.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Observed behaviour versus what you expected.
+      placeholder: |
+        Expected: the validator rejected the candidate.
+        Actual: the run ended with the finding still marked "candidate".
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: The smallest command sequence that shows the problem.
+      render: shell
+      placeholder: |
+        sness run ./target -b 20
+        sness findings -v candidate
+    validations:
+      required: true
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Which stage
+      options:
+        - recon
+        - hunt
+        - validate
+        - gapfill
+        - feedback
+        - trace
+        - judge
+        - fix
+        - dedup
+        - report
+        - orchestrator / scheduler
+        - sandbox
+        - not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `sness doctor`
+      description: This tells us which models and sandbox were available.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: events
+    attributes:
+      label: Relevant events
+      description: |
+        The event log usually names the cause directly. Redact paths if needed.
+        `sqlite3 .sness/sness.db "SELECT kind, payload_json FROM events ORDER BY event_id DESC LIMIT 20"`
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: Versions
+      placeholder: "s-ness 0.1.0, python 3.12.3, claude 2.1.258, docker 29.8.1"
+    validations:
+      required: true

@@ -1,0 +1,47 @@
+# --- secrets: never commit these ---
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+credentials.json
+
+# --- harness state & output ---
+# Run databases, work dirs, architecture maps, PoC scratch, generated reports.
+.sness/
+*.db
+*.db-wal
+*.db-shm
+REPORT.md
+FINDINGS-DETAIL.md
+NEEDS-VALIDATION.md
+
+# --- local fleet config (may name private repo paths) ---
+fleet.yaml
+!fleet.example.yaml
+
+# --- python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+venv/
+.venv/
+env/
+
+# --- tooling caches ---
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+
+# --- editors / os ---
+.vscode/
+.idea/
+*.swp
+.DS_Store

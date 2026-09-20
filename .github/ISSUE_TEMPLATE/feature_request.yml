@@ -1,0 +1,44 @@
+name: Feature request
+description: Propose a capability the harness does not have
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you unable to do today
+      description: Describe the situation, not the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - New pipeline stage
+        - Model backend
+        - Sandbox / execution
+        - Coverage and budgeting
+        - Findings contract
+        - Reporting
+        - CLI
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This does not require the harness to write to a target repository.
+          required: true
+        - label: This does not require probing live or third-party systems.
+          required: true

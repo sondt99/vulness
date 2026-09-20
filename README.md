@@ -1,0 +1,92 @@
+# s-ness
+
+An autonomous vulnerability-discovery harness. Two models, one database.
+
+**Claude Code hunts** (your subscription, via `claude -p` - no API key).
+**GLM-5.3 validates** (Z.AI Coding Plan). Different weights, different blind spots, so
+neither model grades its own homework.
+
+Modeled on the architecture Cloudflare described in
+[Build your own vulnerability harness](https://blog.cloudflare.com/build-your-own-vulnerability-harness/),
+and seeded with the prompts from their released
+[security-audit skill](https://github.com/cloudflare/security-audit-skill).
+
+## Why a harness and not just a prompt
+
+Point any frontier model at a repo and it finds bugs for about an hour. Then the context
+window fills, it starts forgetting what it found, and it confidently validates its own
+false positives. A harness fixes that structurally:
+
+| Failure | Answer in s-ness |
+|---|---|
+| Context exhaustion | All state in SQLite. Agents are stateless, disposable, and stay under ~25% of their window. |
+| Self-grading | The validator **cannot file findings** - enforced by an AST test, not a prompt. |
+| One model's blind spots | Hunt on Claude, validate on GLM. |
+| "It reviewed the code" ≠ "it found a bug" | Threat model required before filing; PoCs run against read-only source in a sandbox. |
+| A 5-hour run dies at hour 4 | Crash costs the in-flight task only. `--resume` picks up the rest. |
+
+## Install
+
+```bash
+pip install -e .
+export GLM_API_KEY=...          # Z.AI Coding Plan key
+claude --version                # must be logged in (subscription, not an API key)
+sness doctor                    # verifies both models + the sandbox before you spend a run
+```
+
+`doctor` is not decorative. It starts a container and asserts the network is actually
+unreachable and the target mount is actually read-only, because a sandbox that silently
+fails to start turns the whole harness into a very expensive `grep`.
+
+## Use
+
+```bash
+sness run /path/to/repo              # recon -> hunt -> validate -> report
+sness run /path/to/repo -b 40 -g 2   # bigger budget, two gapfill passes
+sness status                         # where the last run got to
+sness findings -v confirmed          # what survived validation
+sness findings -v rejected           # what the validator killed, and why
+sness wishlist                       # what agents asked for and did not get
+sness report -o REPORT.md
+```
+
+## How a run works
+
+```
+recon ──▶ hunt ──▶ validate ──▶ report
+  │        │ ▲         │
+  │        │ └── sibling forks (leads outside the current cell)
+  │        │ ▲
+  │        │ └── gapfill (cells the grid says are thin)
+  └────────┴── all of it contending for one worker pool
+```
+
+1. **Recon** maps the repo and *writes its own threat model* - including attack classes
+   specific to this codebase. On the calibration target it invented
+   `partial-sanitization-bypass`, which is precisely the bug that was there.
+2. **Hunt** attacks one `(area × attack-class)` cell. It must state attacker, boundary and
+   broken assumption before it may file anything.
+3. **Gates** run before any validator is paid: a structural check, then a deterministic
+   file/line check written in plain Python - models hallucinate line numbers, and a model
+   asked to check another model's line numbers hallucinates agreement.
+4. **Validate** hands the finding to GLM with one instruction: *disprove this*.
+5. **Report** is pure rendering. No model, so the prose and the data cannot disagree.
+
+## Calibration
+
+Measured against a target with known ground truth (2 planted bugs + 1 crypto decoy):
+
+- Found the unauthenticated SQL injection, the `../` path traversal, and an auth bypass
+  the author had written by accident.
+- Did **not** flag the planted `hmac.compare_digest` decoy.
+- Two defects this surfaced in s-ness itself - attack class splitting one bug into three
+  identities, and `schema_invalid` being treated as fatal - are now regression tests.
+
+## Status
+
+Working: recon, hunt, validate, coverage grid, gapfill, sibling forking, shallow-run
+detection, budget reserve, wishlist, Docker sandbox, report, resume.
+
+Not built yet, deliberately: cross-repo tracing and a dedicated dedup agent. Cloudflare's
+advice is to skip both until you have more than one repo that matters and are actually
+drowning in noise. See `docs/PLAN.md`.
