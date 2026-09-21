@@ -18,6 +18,7 @@ from vulness.agents.base import AgentResult
 from vulness.agents.context_budget import ContextBudget, Section
 from vulness.agents.roles.context import RoleContext, TaskOutcome
 from vulness.coverage.cells import BUILTIN_ATTACK_CLASSES, Area, build_grid, discover_areas
+from vulness.coverage.scope import scope_areas
 from vulness.prompts import preamble, render
 from vulness.state.models import Task, now
 
@@ -184,7 +185,8 @@ async def run_recon(ctx: RoleContext, task: Task) -> TaskOutcome:
         )
 
     payload = _merge_payloads(good)
-    areas = _areas_from_payload(payload, repo)
+    changed = list((task.seed_json or {}).get("changed_files") or [])
+    areas = _scoped_areas(changed, repo) if changed else _areas_from_payload(payload, repo)
     extra_classes = [
         str(c.get("name", "")).strip()
         for c in payload.get("repo_specific_attack_classes", [])
@@ -206,6 +208,7 @@ async def run_recon(ctx: RoleContext, task: Task) -> TaskOutcome:
         repo_id=task.repo_id,
         task_id=task.task_id,
         passes=len(good),
+        scoped=bool(changed),
         areas=len(areas),
         cells=len(cells),
         repo_specific_classes=extra_classes,
@@ -226,6 +229,24 @@ async def run_recon(ctx: RoleContext, task: Task) -> TaskOutcome:
             "architecture_path": str(arch_path),
         },
     )
+
+
+def _scoped_areas(changed: list[str], repo: Path) -> list[Area]:
+    """Areas built only from files that changed, for a `--since` run.
+
+    Recon's own view is ignored here on purpose: it maps the whole repository, and using it
+    would re-seed cells over untouched code, which is exactly the spend a scoped run exists
+    to avoid.
+    """
+    areas: list[Area] = []
+    for name, files in scope_areas(changed):
+        langs: dict[str, int] = {}
+        for rel in files:
+            suffix = Path(rel).suffix.lower()
+            if suffix:
+                langs[suffix] = langs.get(suffix, 0) + 1
+        areas.append(Area(name=name, paths=files, files=len(files), langs=langs))
+    return areas
 
 
 def _areas_from_payload(payload: dict, repo: Path) -> list[Area]:

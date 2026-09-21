@@ -79,6 +79,11 @@ class RepoConfig(BaseModel):
     enabled: bool = True
     budget_tasks: int | None = None
     scope_paths: list[str] = Field(default_factory=list)
+    # A sandbox whose image cannot import the target is a sandbox nobody uses. Measured:
+    # hunters offered python:3.12-slim against a Flask app invoked it zero times across a
+    # whole run, correctly, because `import flask` fails there. Point this at an image that
+    # has the target's runtime dependencies installed.
+    sandbox_image: str | None = None
 
 
 class Settings(BaseSettings):

@@ -1,0 +1,94 @@
+name: ci
+
+# CI checks the code, never the models. `vulness run` is deliberately absent: a live
+# calibration needs a logged-in Claude Code session plus a GLM key, and every invocation
+# spends real money against them, so it is not something a pull request gets to trigger.
+# `vulness doctor` is absent for the same reason plus one more: it probes the Docker
+# sandbox, and no runner here guarantees a usable daemon. Both are run by hand on a
+# machine that has credentials.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: lint, types, tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install pyright
+
+      # Three steps rather than one chained command: a red build should name the gate that
+      # failed in the job summary, without anyone opening the log to find out.
+      - name: ruff
+        run: ruff check vulness/ tests/
+
+      - name: pyright
+        run: pyright vulness/
+
+      - name: pytest
+        run: pytest -q
+
+  no-em-dash:
+    name: no em dashes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Bytes rather than decoded text: `git ls-files` lists everything tracked, binary
+      # included, and a UnicodeDecodeError must not be able to end the scan early and
+      # look like a pass.
+      - name: Scan tracked files for U+2014 and U+2013
+        run: |
+          python3 - <<'PY'
+          import subprocess
+          import sys
+
+          # Escapes, not the characters themselves: this file is tracked, so a literal
+          # dash here would make the check fail on its own source.
+          DASHES = [(b"\xe2\x80\x94", "U+2014 em dash"), (b"\xe2\x80\x93", "U+2013 en dash")]
+
+          listed = subprocess.run(["git", "ls-files", "-z"], capture_output=True, check=True)
+          files = [f for f in listed.stdout.split(b"\0") if f]
+
+          offences = []
+          for path in files:
+              try:
+                  with open(path, "rb") as fh:
+                      data = fh.read()
+              except OSError:
+                  continue
+              if not any(needle in data for needle, _ in DASHES):
+                  continue
+              name = path.decode("utf-8", "replace")
+              for number, line in enumerate(data.split(b"\n"), 1):
+                  for needle, label in DASHES:
+                      if needle in line:
+                          offences.append(f"{name}:{number}: {label}")
+
+          if offences:
+              print("This project does not use em or en dashes. Use a colon, a comma, or a")
+              print("hyphen instead. Offending lines:")
+              print("\n".join(offences))
+              sys.exit(1)
+
+          print(f"clean: {len(files)} tracked files, no U+2014 or U+2013")
+          PY

@@ -29,6 +29,13 @@ def _dumps(v: Any) -> str:
     return json.dumps(v, ensure_ascii=False, default=str)
 
 
+def _wish_from_row(row: sqlite3.Row) -> Wish:
+    """`Wish` has no `from_row` of its own, and two readers decoding it separately drift."""
+    d = dict(row)
+    d["context_json"] = json.loads(d["context_json"] or "{}")
+    return Wish(**d)
+
+
 class Database:
     def __init__(self, path: Path | str) -> None:
         self.path = Path(path)
@@ -261,16 +268,28 @@ class Database:
             ),
         )
 
-    def requeue(self, task: Task, origin: str, *, priority_boost: int = -10) -> Task:
+    def requeue(
+        self,
+        task: Task,
+        origin: str,
+        *,
+        priority_boost: int = -10,
+        seed_extra: dict[str, Any] | None = None,
+    ) -> Task:
         """Re-file a task under a fresh id so the original attempt stays auditable.
 
         The retry depth travels in seed_json rather than in `attempt`, because `attempt`
         counts leases of one row and is reset by the new id. Without this, a task that
         fails identically every time is requeued forever: observed live as nine
         consecutive validations of the same finding, each one paid for.
+
+        `seed_extra` exists because `TaskOrigin` is a closed literal validated on every
+        read: a caller whose real origin is not in that set has to borrow a label, and
+        without somewhere to record the truth the requeue becomes untraceable.
         """
         seed = dict(task.seed_json or {})
         seed["retry_depth"] = int(seed.get("retry_depth", 0)) + 1
+        seed.update(seed_extra or {})
         clone = task.model_copy(
             update={
                 "task_id": new_id("t"),
@@ -302,6 +321,10 @@ class Database:
             params += (repo_id,)
         row = self.one(sql, params)
         return int(row["c"]) if row else 0
+
+    def get_task(self, task_id: str) -> Task | None:
+        row = self.one("SELECT * FROM tasks WHERE task_id=?", (task_id,))
+        return Task.from_row(row) if row else None
 
     def iter_tasks(self, run_id: str, **filters: Any) -> Iterator[Task]:
         sql = "SELECT * FROM tasks WHERE run_id=?"
@@ -512,9 +535,35 @@ class Database:
         if run_id:
             sql += " AND run_id=?"
             params = (run_id,)
-        out = []
-        for r in self.query(sql + " ORDER BY created_at DESC", params):
-            d = dict(r)
-            d["context_json"] = json.loads(d["context_json"] or "{}")
-            out.append(Wish(**d))
-        return out
+        return [_wish_from_row(r) for r in self.query(sql + " ORDER BY created_at DESC", params)]
+
+    def get_wish(self, wish_id: str) -> Wish | None:
+        row = self.one("SELECT * FROM wishlist WHERE wish_id=?", (wish_id,))
+        return _wish_from_row(row) if row else None
+
+    def resolve_wish(self, wish_id: str, *, status: str, requeued_task_id: str | None) -> None:
+        """Close a wish: 'provided' once the dependency exists, or 'wontfix'.
+
+        `requeued_task_id` is the half that makes the wishlist a channel rather than a
+        complaints box. It links "an agent could not do this" to the task that did it
+        once someone supplied the missing piece; a 'provided' row with no link is a wish
+        that was granted and then quietly never acted on.
+
+        Unknown ids update nothing and still record the attempt, because the caller here
+        is a human at a terminal and a silent no-op is worse than an audited one.
+        """
+        wish = self.get_wish(wish_id)
+        self.execute(
+            "UPDATE wishlist SET status=?, resolved_at=?, requeued_task_id=? WHERE wish_id=?",
+            (status, now(), requeued_task_id, wish_id),
+        )
+        self.event(
+            "wish.resolved",
+            run_id=wish.run_id if wish else None,
+            repo_id=wish.repo_id if wish else None,
+            task_id=wish.task_id if wish else None,
+            wish_id=wish_id,
+            status=status,
+            requeued_task_id=requeued_task_id,
+            resource=wish.resource if wish else None,
+        )

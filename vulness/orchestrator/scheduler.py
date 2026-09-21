@@ -75,6 +75,7 @@ class Scheduler:
         gapfill_passes: int = 1,
         triage: bool = True,
         fix: bool = False,
+        scopes: dict[str, list[str]] | None = None,
     ) -> None:
         self.ctx = ctx
         self.db = ctx.db
@@ -82,6 +83,8 @@ class Scheduler:
         self.gapfill_passes = gapfill_passes
         self.triage = triage
         self.fix = fix
+        # Per repo list of changed files for a --since run. Empty means full sweep.
+        self.scopes = scopes or {}
         self._gapfill_done = 0
         self._triage_done = False
         self._feedback_done = 0
@@ -107,6 +110,7 @@ class Scheduler:
                 priority=0,  # nothing useful happens before the map exists
                 prompt="(rendered at dispatch)",
                 origin="seed",
+                seed_json={"changed_files": self.scopes.get(repo_id, [])},
             )
         )
 

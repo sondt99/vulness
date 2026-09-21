@@ -24,6 +24,12 @@ from vulness.coverage.cells import companion_for
 from vulness.findings import HunterFinding, candidate_gate, compute_fingerprint, mechanical_check
 from vulness.findings.poc import POC_TO_VALIDATION, execute_poc
 from vulness.prompts import preamble, render
+from vulness.sandbox.shim import (
+    invocation_count,
+    probe_imports,
+    shim_instructions,
+    write_shim,
+)
 from vulness.state.db import new_id
 from vulness.state.models import Finding, Task, Validation, Wish, now
 
@@ -48,6 +54,49 @@ async def run_hunt(ctx: RoleContext, task: Task) -> TaskOutcome:
     area = seed.get("area") or "root"
     paths = seed.get("paths") or ["."]
 
+    # Give the hunter the sandbox during the hunt, not only at proof time. Until this
+    # existed the sandbox ran a PoC after a finding was already filed, which is the wrong
+    # end of the process: the hunter had committed to a theory it had no way to test.
+    shim_block = ""
+    extra_tools: list[str] = []
+    shim_path: Path | None = None
+    if ctx.sandbox is not None:
+        work = ctx.settings.work_dir / task.run_id / task.repo_id / "exec" / task.task_id
+        cfg = ctx.settings.sandbox
+        if image := ctx.sandbox_image_for(task.repo_id):
+            cfg = cfg.model_copy(update={"image": image})
+        shim = write_shim(
+            work / "vulness-exec", target=repo, scratch=work / "scratch", cfg=cfg
+        )
+        usable, detail = probe_imports(shim, (seed.get("import_hint") or None))
+        if usable:
+            shim_block = shim_instructions(shim)
+            extra_tools = [f"Bash({shim}:*)"]
+            shim_path = shim
+        else:
+            # Do not offer a sandbox that cannot run the target: the hunter will inspect
+            # it, conclude it is useless, and move on without telling anyone. Make the gap
+            # visible instead, which is exactly what the wishlist is for.
+            shim_block = (
+                "_A sandbox exists but cannot run this target "
+                f"(`{detail}`), so reason from source and record what you could not test._"
+            )
+            ctx.db.wish(
+                Wish(
+                    wish_id=new_id("w"),
+                    run_id=task.run_id,
+                    repo_id=task.repo_id,
+                    task_id=task.task_id,
+                    kind="build_env",
+                    resource=f"container image that can import {task.repo_id}",
+                    context_json={
+                        "probe_error": detail,
+                        "current_image": cfg.image,
+                        "fix": "set sandbox_image for this repo in fleet.yaml",
+                    },
+                )
+            )
+
     companion = companion_for(attack_class, ctx.skill_dir())
     instruction = render(
         "hunter",
@@ -58,6 +107,7 @@ async def run_hunt(ctx: RoleContext, task: Task) -> TaskOutcome:
         paths=", ".join(paths),
         architecture_block="{ARCHITECTURE}",
         companion_block="{COMPANION}",
+        sandbox_block="{SANDBOX}",
     )
     lead = seed.get("lead")
 
@@ -66,8 +116,12 @@ async def run_hunt(ctx: RoleContext, task: Task) -> TaskOutcome:
     # playbook are shed first, because a hunter can read the source but cannot recover a
     # mangled output schema.
     budget = ContextBudget(ctx.settings.hunt.model, occupancy=ctx.settings.budget.context_occupancy)
-    head, sep, tail = instruction.partition("{ARCHITECTURE}")
-    mid, _, foot = tail.partition("{COMPANION}")
+    head, _, tail = instruction.partition("{ARCHITECTURE}")
+    mid, _, rest = tail.partition("{COMPANION}")
+    companion_tail, _, foot = rest.partition("{SANDBOX}")
+    # The sandbox block sits inline, before the output contract rather than appended after
+    # it. Placed last it read as an appendix and hunters invoked it zero times across a
+    # whole run; the capability existed and went unused because of where it was printed.
     sections = [
         Section("instruction_head", head, priority=0),
         Section("architecture", _architecture_block(ctx, task), priority=3, floor_chars=1500),
@@ -78,6 +132,11 @@ async def run_hunt(ctx: RoleContext, task: Task) -> TaskOutcome:
             priority=2,
             floor_chars=3000,
         ),
+        Section("instruction_companion_tail", companion_tail, priority=0),
+        # Priority 0: an agent told it can run code, whose instructions for doing so were
+        # trimmed away, will invent an invocation and report its failure as a finding.
+        Section("sandbox", shim_block or "_No sandbox available; reason from source only._",
+                priority=0),
         Section("instruction_tail", foot, priority=0),
     ]
     # The Feedback stage rewrites queued task prompts in place. Hunts are re-rendered from
@@ -116,6 +175,7 @@ async def run_hunt(ctx: RoleContext, task: Task) -> TaskOutcome:
         cwd=repo,
         timeout_s=ctx.settings.hunt.timeout_s,
         schema={"findings": "list", "out_of_scope_leads": "list", "wishlist": "list"},
+        allowed_tools=(ctx.settings.hunt.allowed_tools + extra_tools) or None,
     )
     duration = time.monotonic() - started
 
@@ -154,6 +214,17 @@ async def run_hunt(ctx: RoleContext, task: Task) -> TaskOutcome:
             peak_tokens=peak,
             occupancy=round(frac, 3),
             target=ctx.settings.budget.context_occupancy,
+        )
+
+    sandbox_calls = invocation_count(shim_path) if shim_path else 0
+    if shim_path is not None:
+        ctx.db.event(
+            "hunt.sandbox_usage",
+            run_id=task.run_id,
+            repo_id=task.repo_id,
+            task_id=task.task_id,
+            cell_id=task.cell_id,
+            invocations=sandbox_calls,
         )
 
     payload = result.extract_json() or {}
@@ -234,6 +305,7 @@ async def run_hunt(ctx: RoleContext, task: Task) -> TaskOutcome:
         cost_usd=result.cost_usd,
         detail={
             "coverage_note": payload.get("coverage_note", ""),
+            "sandbox_invocations": sandbox_calls,
             "peak_context_tokens": peak,
             "context_occupancy": round(frac, 3),
             "context_fit": fit.summary(),

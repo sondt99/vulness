@@ -54,5 +54,12 @@ class RoleContext:
         except KeyError as e:
             raise KeyError(f"unknown repo_id {repo_id!r}") from e
 
+    def sandbox_image_for(self, repo_id: str) -> str | None:
+        """Per repo override, so one fleet can mix runtimes."""
+        for rc in self.settings.repos:
+            if rc.name == repo_id and rc.sandbox_image:
+                return rc.sandbox_image
+        return None
+
     def skill_dir(self) -> Path | None:
         return self.settings.resolved_skill_dir()

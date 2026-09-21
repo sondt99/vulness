@@ -5,6 +5,8 @@
     vulness status              where the last run got to
     vulness findings            what it found, and what killed the rest
     vulness wishlist            what the agents asked for and did not get
+    vulness wishlist resolve    grant one and re-run the task that asked for it
+    vulness wishlist dismiss    close one without granting it
     vulness report              render REPORT.md from the database
 
 argparse rather than a CLI framework, deliberately: typer 0.12.x breaks against
@@ -26,7 +28,7 @@ from rich.table import Table
 
 from vulness.config import Settings
 from vulness.state.db import Database, new_id
-from vulness.state.models import Run
+from vulness.state.models import Run, Wish
 
 console = Console()
 
@@ -97,7 +99,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if not rows[2][1]:
         console.print(
             "\n[yellow]Sandbox unavailable.[/] Hunts will still run, but PoCs cannot be "
-            "executed \u2014 findings stay source-only."
+            "executed - findings stay source-only."
         )
     return 0
 
@@ -163,16 +165,34 @@ def cmd_run(args: argparse.Namespace) -> int:
             )
         )
         if len(repos) == 1:
-            console.print(f"[green]run[/] {run_id} \u00b7 {repo_id} @ {(head or 'no-git')[:8]}")
+            console.print(f"[green]run[/] {run_id} - {repo_id} @ {(head or 'no-git')[:8]}")
         else:
             console.print(
-                f"[green]run[/] {run_id} \u00b7 {len(repos)} repos: {', '.join(repos)}"
+                f"[green]run[/] {run_id} - {len(repos)} repos: {', '.join(repos)}"
             )
+
+    scopes: dict[str, list[str]] = {}
+    if args.since:
+        from vulness.coverage.scope import changed_since
+
+        for rid, rpath in repos.items():
+            sc = changed_since(rpath, args.since)
+            if sc.error:
+                console.print(f"[red]{rid}: {sc.summary()}[/]")
+                return 1
+            scopes[rid] = sc.changed
+            console.print(f"  {rid}: {sc.summary()}")
+        if not any(scopes.values()):
+            console.print(
+                f"[yellow]nothing changed since {args.since}.[/] No work to do."
+            )
+            db.finish_run(run_id, "complete")
+            return 0
 
     asyncio.run(
         _execute(
             settings, db, run_id, repos, args.gapfill,
-            triage=not args.no_triage, fix=args.fix,
+            triage=not args.no_triage, fix=args.fix, scopes=scopes,
         )
     )
 
@@ -187,10 +207,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(render_report(db, run_id))
     console.print(
-        f"\n[bold]{stats['by_verdict'].get('confirmed', 0)} confirmed[/] \u00b7 "
-        f"{stats['by_verdict'].get('rejected', 0)} rejected \u00b7 "
-        f"{stats['cells_covered']}/{stats['cells_total']} cells \u00b7 "
-        f"{stats['tasks']} tasks \u00b7 ${stats['cost_usd']}"
+        f"\n[bold]{stats['by_verdict'].get('confirmed', 0)} confirmed[/] - "
+        f"{stats['by_verdict'].get('rejected', 0)} rejected - "
+        f"{stats['cells_covered']}/{stats['cells_total']} cells - "
+        f"{stats['tasks']} tasks - ${stats['cost_usd']}"
     )
     console.print(f"report: {out}")
     return 0
@@ -205,6 +225,7 @@ async def _execute(
     *,
     triage: bool = True,
     fix: bool = False,
+    scopes: dict[str, list[str]] | None = None,
 ) -> None:
     from vulness.agents.claude_cli import ClaudeCodeAgent
     from vulness.agents.glm import GLMAgent
@@ -247,7 +268,7 @@ async def _execute(
     )
     try:
         await Scheduler(
-            ctx, run_id, gapfill_passes=gapfill, triage=triage, fix=fix
+            ctx, run_id, gapfill_passes=gapfill, triage=triage, fix=fix, scopes=scopes
         ).run(list(repos))
     finally:
         await verify.aclose()
@@ -314,6 +335,14 @@ def cmd_findings(args: argparse.Namespace) -> int:
     return 0
 
 
+# The wishlist is a two-way channel, and the return half needs an origin for the task it
+# re-files. `TaskOrigin` has no member for it and `Task.from_row` validates that literal on
+# every lease, so an invented label would write a row the scheduler can never pick up.
+# "feedback" is the existing origin for work re-filed because information came back into
+# the system; the wish id rides in seed_json so the real provenance survives the borrowing.
+_WISH_ORIGIN = "feedback"
+
+
 def cmd_wishlist(args: argparse.Namespace) -> int:
     """What the agents asked for. This is how they talk back to you."""
     settings, db = _load(args.config)
@@ -322,12 +351,99 @@ def cmd_wishlist(args: argparse.Namespace) -> int:
         console.print("wishlist empty")
         return 0
     t = Table(title="open wishes")
+    t.add_column("wish_id")
     t.add_column("kind")
     t.add_column("resource", overflow="fold")
     t.add_column("why", overflow="fold")
+    t.add_column("asked by", overflow="fold")
     for w in items:
-        t.add_row(w.kind, w.resource, str(w.context_json.get("why", "")))
+        t.add_row(
+            w.wish_id,
+            w.kind,
+            w.resource,
+            str(w.context_json.get("why", "")),
+            w.task_id or "(task gone)",
+        )
     console.print(t)
+    console.print(
+        "\n[dim]vulness wishlist resolve <wish_id>[/] grants one and re-runs the task that "
+        "asked\n[dim]vulness wishlist dismiss <wish_id>[/] closes one without granting it"
+    )
+    return 0
+
+
+def _open_wish(db: Database, wish_id: str) -> Wish | None:
+    """Fetch a wish that can still be acted on, explaining any refusal."""
+    wish = db.get_wish(wish_id)
+    if wish is None:
+        console.print(f"[red]no such wish:[/] {wish_id}. `vulness wishlist` lists the open ones.")
+        return None
+    if wish.status != "open":
+        detail = f"[yellow]{wish_id} is already {wish.status}[/] ({wish.resolved_at})"
+        if wish.requeued_task_id:
+            detail += f", re-enqueued as {wish.requeued_task_id}"
+        console.print(f"{detail}. Resolving it again would queue that work a second time.")
+        return None
+    return wish
+
+
+def _warn_if_run_closed(db: Database, run_id: str) -> None:
+    """A queued task in a finished run is never leased: nothing is left to pick it up."""
+    row = db.one("SELECT status FROM runs WHERE run_id=?", (run_id,))
+    if row is None:
+        console.print(
+            f"[yellow]run {run_id} is no longer in the database.[/] The task is queued under "
+            "a run nothing can resume, so it will not be picked up."
+        )
+        return
+    if str(row["status"]) == "running":
+        return
+    console.print(
+        f"[yellow]run {run_id} is {row['status']}.[/] Re-enqueuing into a finished run does "
+        f"nothing on its own. Pick it up with:\n  vulness run --resume {run_id}"
+    )
+
+
+def cmd_wishlist_resolve(args: argparse.Namespace) -> int:
+    """Grant a wish and re-run the exact task that asked for it.
+
+    Marking a wish provided without re-filing that task is the failure this command exists
+    to prevent: the dependency arrives, and the gap the agent wrote about stays unexamined
+    because nothing ever asks again.
+    """
+    settings, db = _load(args.config)
+    wish = _open_wish(db, args.wish_id)
+    if wish is None:
+        return 1
+
+    original = db.get_task(wish.task_id) if wish.task_id else None
+    if original is None:
+        db.resolve_wish(wish.wish_id, status="provided", requeued_task_id=None)
+        console.print(f"[green]provided[/] {wish.wish_id} - {wish.resource}")
+        console.print(
+            "[yellow]the task that asked for it is gone[/], so nothing was re-enqueued: "
+            "the wish status is all that changed."
+        )
+        return 0
+
+    requeued = db.requeue(original, _WISH_ORIGIN, seed_extra={"wish_id": wish.wish_id})
+    db.resolve_wish(wish.wish_id, status="provided", requeued_task_id=requeued.task_id)
+    console.print(f"[green]provided[/] {wish.wish_id} - {wish.resource}")
+    console.print(
+        f"re-enqueued {original.kind} task {original.task_id} as [bold]{requeued.task_id}[/]"
+    )
+    _warn_if_run_closed(db, wish.run_id)
+    return 0
+
+
+def cmd_wishlist_dismiss(args: argparse.Namespace) -> int:
+    """Close a wish nobody is going to grant. Enqueues nothing."""
+    settings, db = _load(args.config)
+    wish = _open_wish(db, args.wish_id)
+    if wish is None:
+        return 1
+    db.resolve_wish(wish.wish_id, status="wontfix", requeued_task_id=None)
+    console.print(f"[dim]wontfix[/] {wish.wish_id} - {wish.resource}")
     return 0
 
 
@@ -385,6 +501,12 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("-b", "--budget", type=int, help="max agent tasks for this repo")
     r.add_argument("-g", "--gapfill", type=int, default=1, help="gapfill passes")
     r.add_argument("--resume", help="continue an existing run_id")
+    r.add_argument(
+        "--since",
+        metavar="REF",
+        help="audit only what changed since this git ref (branch, tag or commit). "
+        "Reports partial coverage: unchanged code is not examined.",
+    )
     r.add_argument("--no-triage", action="store_true", help="skip VVS dedup/judge")
     r.add_argument("--fix", action="store_true", help="propose patches for confirmed findings")
     r.set_defaults(fn=cmd_run)
@@ -399,8 +521,25 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--json", action="store_true")
     f.set_defaults(fn=cmd_findings)
 
-    common(sub.add_parser("wishlist", help="what the agents asked for")).set_defaults(
-        fn=cmd_wishlist
+    w = common(sub.add_parser("wishlist", help="what the agents asked for"))
+    w.set_defaults(fn=cmd_wishlist)
+    # Bare `vulness wishlist` is still the listing, so the action word stays optional.
+    w_sub = w.add_subparsers(dest="wish_action")
+
+    def wish_action(name: str, help_text: str) -> argparse.ArgumentParser:
+        sp = w_sub.add_parser(name, help=help_text)
+        sp.add_argument("wish_id", help="id shown by `vulness wishlist`")
+        # SUPPRESS rather than a None default: argparse copies a subparser's whole namespace
+        # over its parent's, so a plain default would erase a --config given before the
+        # action word.
+        sp.add_argument("-c", "--config", default=argparse.SUPPRESS, help="path to fleet.yaml")
+        return sp
+
+    wish_action("resolve", "grant it and re-run the task that asked").set_defaults(
+        fn=cmd_wishlist_resolve
+    )
+    wish_action("dismiss", "close it without granting it; enqueues nothing").set_defaults(
+        fn=cmd_wishlist_dismiss
     )
 
     rp = common(sub.add_parser("report", help="render REPORT.md"))

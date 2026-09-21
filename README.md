@@ -1,3 +1,5 @@
+[![ci](https://github.com/sondt99/vulness/actions/workflows/ci.yml/badge.svg)](https://github.com/sondt99/vulness/actions/workflows/ci.yml)
+
 # vulness
 
 An autonomous vulnerability-discovery harness. Two models, one database.
