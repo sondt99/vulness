@@ -34,7 +34,7 @@ class Budget:
         # Triage and validation are bounded by how many findings exist, not by how many
         # cells the grid invented, so they cannot run away. Hunting is the unbounded thing,
         # and it is the only thing this budget exists to throttle.
-        if kind in ("validate", "recon", "judge", "dedup", "fix", "feedback", "trace"):
+        if kind in ("validate", "recon", "judge", "dedup", "fix", "feedback", "trace", "chain"):
             return BudgetDecision(True)
 
         remaining = self.remaining(repo_id)

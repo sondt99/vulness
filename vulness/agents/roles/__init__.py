@@ -1,3 +1,4 @@
+from vulness.agents.roles.chain import run_chain
 from vulness.agents.roles.context import RoleContext, TaskOutcome
 from vulness.agents.roles.dedup import run_dedup
 from vulness.agents.roles.feedback import run_feedback
@@ -11,6 +12,7 @@ from vulness.agents.roles.validator import run_validate
 __all__ = [
     "RoleContext",
     "TaskOutcome",
+    "run_chain",
     "run_dedup",
     "run_feedback",
     "run_fixer",

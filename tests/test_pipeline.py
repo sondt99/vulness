@@ -80,3 +80,23 @@ def test_fixer_never_writes_to_the_target_repo() -> None:
     """A patch is a proposal for human review. The harness is read-only against targets."""
     src = (VULNESS / "agents/roles/fixer.py").read_text()
     assert "work_dir" in src, "fixer must write patches under work_dir"
+
+
+def test_chain_stage_exists_and_is_routed() -> None:
+    """Every other stage treats a finding as one root cause crossing one boundary. Chains
+    are the only place impact is judged across findings."""
+    assert (VULNESS / "agents/roles/chain.py").is_file()
+    assert (VULNESS / "prompts/chain.md").is_file()
+    assert "chain" in _routed_kinds()
+
+
+def test_chain_stage_does_not_file_findings() -> None:
+    """It composes what is already confirmed; it may not invent new records."""
+    tree = ast.parse((VULNESS / "agents/roles/chain.py").read_text())
+    called = {
+        n.func.attr
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+    }
+    assert "file_finding" not in called
+    assert "file_chain" in called

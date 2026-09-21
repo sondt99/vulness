@@ -210,6 +210,23 @@ def render_report(db: Database, run_id: str) -> str:
             out.append(f"- ~~{f.title}~~ - {why}")
         out.append("")
 
+    if chains := [c for c in db.chains(run_id=run_id) if c["verdict"] != "rejected"]:
+        by_title = {f.finding_id: f.title for f in findings}
+        out += [
+            "## Exploit chains",
+            "",
+            "_Confirmed findings that compose. Severity here is the impact of the whole "
+            "chain, which is why it can exceed any single step._",
+            "",
+        ]
+        for c in sorted(chains, key=lambda x: _SEVERITY_ORDER.get(x["severity"], 5)):
+            out += [f"### {c['title']}", "", f"**{c['severity']}** - {c['terminal_impact']}", ""]
+            if c["preconditions"]:
+                out += [f"Attacker starts with: {c['preconditions']}", ""]
+            for i, fid in enumerate(c["steps"], 1):
+                out.append(f"{i}. {by_title.get(fid, fid)}")
+            out += ["", c["narrative"], ""]
+
     if wishes := db.open_wishes(run_id):
         out += [
             "## Wishlist",

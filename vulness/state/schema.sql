@@ -191,3 +191,23 @@ CREATE TABLE IF NOT EXISTS coverage_history (
     PRIMARY KEY (repo_id, cell_id)
 );
 CREATE INDEX IF NOT EXISTS idx_cov_repo ON coverage_history(repo_id);
+
+-- Exploit chains. Every finding above is one root cause crossing one boundary, which is
+-- the right unit for fixing and the wrong unit for judging impact: three mediums that
+-- compose into unauthenticated code execution are not a medium problem. Nothing else in
+-- the pipeline composes findings, so this is where that happens.
+CREATE TABLE IF NOT EXISTS chains (
+    chain_id      TEXT PRIMARY KEY,
+    run_id        TEXT NOT NULL,
+    repo_id       TEXT NOT NULL,
+    title         TEXT NOT NULL,
+    narrative     TEXT NOT NULL,
+    steps_json    TEXT NOT NULL DEFAULT '[]',   -- ordered finding_ids
+    preconditions TEXT,
+    terminal_impact TEXT,
+    severity      TEXT NOT NULL DEFAULT 'medium',
+    verdict       TEXT NOT NULL DEFAULT 'proposed',  -- proposed|confirmed|rejected
+    reason        TEXT,
+    created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chains_repo ON chains(repo_id, verdict);

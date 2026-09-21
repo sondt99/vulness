@@ -632,6 +632,57 @@ class Database:
             out.append(Validation(**d))
         return out
 
+    # ---------- exploit chains ----------
+
+    def file_chain(
+        self,
+        chain_id: str,
+        run_id: str,
+        repo_id: str,
+        *,
+        title: str,
+        narrative: str,
+        steps: list[str],
+        preconditions: str,
+        terminal_impact: str,
+        severity: str,
+    ) -> None:
+        self.execute(
+            "INSERT INTO chains(chain_id, run_id, repo_id, title, narrative, steps_json,"
+            " preconditions, terminal_impact, severity, verdict, created_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,'proposed',?)",
+            (
+                chain_id, run_id, repo_id, title, narrative, _dumps(steps),
+                preconditions, terminal_impact, severity, now(),
+            ),
+        )
+        self.event(
+            "chain.filed", run_id=run_id, repo_id=repo_id, chain_id=chain_id,
+            steps=len(steps), severity=severity, title=title,
+        )
+
+    def set_chain_verdict(self, chain_id: str, verdict: str, reason: str) -> None:
+        self.execute(
+            "UPDATE chains SET verdict=?, reason=? WHERE chain_id=?", (verdict, reason, chain_id)
+        )
+        self.event("chain.verdict", chain_id=chain_id, verdict=verdict)
+
+    def chains(self, run_id: str | None = None, repo_id: str | None = None) -> list[dict]:
+        sql = "SELECT * FROM chains WHERE 1=1"
+        params: tuple = ()
+        if run_id:
+            sql += " AND run_id=?"
+            params += (run_id,)
+        if repo_id:
+            sql += " AND repo_id=?"
+            params += (repo_id,)
+        out = []
+        for r in self.query(sql + " ORDER BY created_at", params):
+            d = dict(r)
+            d["steps"] = json.loads(d.pop("steps_json") or "[]")
+            out.append(d)
+        return out
+
     # ---------- wishlist ----------
 
     def wish(self, w: Wish) -> Wish:

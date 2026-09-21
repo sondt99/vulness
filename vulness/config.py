@@ -56,6 +56,12 @@ class VerifyBackend(BaseModel):
 
 class SandboxConfig(BaseModel):
     backend: Literal["docker", "bwrap", "none"] = "docker"
+    # Let hunters run code during the hunt, not only at proof time. Measured across three
+    # targets including a Go repository with a working toolchain: hunters invoked it zero
+    # times. Claude hunts by reading. The capability stays because it should pay off on
+    # parsers and binaries, but it is off by default rather than costing a container probe
+    # per hunt for a tool nothing reaches for.
+    hunter_shell: bool = False
     image: str = "python:3.12-slim"
     cpus: float = 1.0
     memory: str = "2g"

@@ -343,6 +343,23 @@ def cmd_findings(args: argparse.Namespace) -> int:
 _WISH_ORIGIN = "feedback"
 
 
+def cmd_chains(args: argparse.Namespace) -> int:
+    """Confirmed findings that compose into something worse than any one of them."""
+    settings, db = _load(args.config)
+    rid = args.run or (db.latest_run() or {})["run_id"]
+    items = [c for c in db.chains(run_id=rid) if c["verdict"] != "rejected"]
+    if not items:
+        console.print("no chains")
+        return 0
+    findings = {f.finding_id: f.title for f in db.findings(rid)}
+    for c in items:
+        console.print(f"\n[bold]{c['title']}[/]  [red]{c['severity']}[/]")
+        console.print(f"  ends in: {c['terminal_impact']}")
+        for i, fid in enumerate(c["steps"], 1):
+            console.print(f"  {i}. {findings.get(fid, fid)}")
+    return 0
+
+
 def cmd_wishlist(args: argparse.Namespace) -> int:
     """What the agents asked for. This is how they talk back to you."""
     settings, db = _load(args.config)
@@ -520,6 +537,10 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--run", help="run_id (default: latest)")
     f.add_argument("--json", action="store_true")
     f.set_defaults(fn=cmd_findings)
+
+    ch = common(sub.add_parser("chains", help="findings that compose into a worse attack"))
+    ch.add_argument("--run", help="run_id (default: latest)")
+    ch.set_defaults(fn=cmd_chains)
 
     w = common(sub.add_parser("wishlist", help="what the agents asked for"))
     w.set_defaults(fn=cmd_wishlist)

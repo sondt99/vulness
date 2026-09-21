@@ -21,6 +21,7 @@ from vulness.agents.classify import is_retryable
 from vulness.agents.roles import (
     RoleContext,
     TaskOutcome,
+    run_chain,
     run_dedup,
     run_feedback,
     run_fixer,
@@ -51,6 +52,7 @@ _HANDLERS: dict[str, Callable[[RoleContext, Task], Awaitable[TaskOutcome]]] = {
     "judge": run_judge,
     "fix": run_fixer,
     "dedup": run_dedup,
+    "chain": run_chain,
 }
 
 
@@ -455,6 +457,23 @@ class Scheduler:
                         )
                     )
                     added += 1
+
+        for repo_id in repo_ids:
+            # Lowest priority in the triage phase on purpose: it composes what judging has
+            # confirmed, so running it earlier would compose a half-finished finding set.
+            self.db.enqueue(
+                Task(
+                    task_id=new_id("t"),
+                    run_id=self.run_id,
+                    repo_id=repo_id,
+                    stage="chain",
+                    kind="chain",
+                    origin="seed",
+                    priority=60,
+                    prompt="(rendered at dispatch)",
+                )
+            )
+            added += 1
 
         # Cross-repo tracing is meaningless below two repos, and trace itself short-circuits
         # without spending a model call, so gating here is belt and braces.

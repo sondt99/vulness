@@ -96,7 +96,7 @@ async def run_hunt(ctx: RoleContext, task: Task) -> TaskOutcome:
     shim_block = ""
     extra_tools: list[str] = []
     shim_path: Path | None = None
-    if ctx.sandbox is not None:
+    if ctx.sandbox is not None and ctx.settings.sandbox.hunter_shell:
         work = ctx.settings.work_dir / task.run_id / task.repo_id / "exec" / task.task_id
         cfg = ctx.settings.sandbox
         if image := ctx.sandbox_image_for(task.repo_id):

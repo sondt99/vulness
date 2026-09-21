@@ -9,7 +9,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 TaskKind = Literal[
-    "recon", "hunt", "validate", "gapfill", "feedback", "trace", "judge", "fix", "dedup"
+    "recon", "hunt", "validate", "gapfill", "feedback", "trace", "judge", "fix", "dedup", "chain"
 ]
 TaskStatus = Literal["queued", "leased", "done", "failed", "shallow", "abandoned"]
 TaskOrigin = Literal[
