@@ -21,6 +21,16 @@ Defect 3 was not planted on purpose. It was written while building the fixture, 
 the harness, and confirmed by hand afterwards. It stays because an accidental bug is a
 better test than a designed one.
 
+## Why app.py and Dockerfile are here
+
+Without a wiring point, reachability cannot be established from source, and the judge
+stage correctly returned `needs_deployment_fact` for every finding: the routes might never
+be registered. `app.py` registers all three blueprints unconditionally and the Dockerfile
+exposes the port, so "exposed in any deployment of this app" becomes a fact in the
+repository rather than an assumption.
+
+That was a fixture defect found by the harness judging its own calibration target.
+
 ## Running the calibration
 
 ```bash
