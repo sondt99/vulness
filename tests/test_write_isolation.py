@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-SNESS = Path(__file__).resolve().parents[1] / "sness"
+VULNESS = Path(__file__).resolve().parents[1] / "vulness"
 
 # Functions that mutate the findings table. A validator may call none of them.
 FORBIDDEN_FOR_VALIDATORS = {"file_finding"}
@@ -29,7 +29,7 @@ def _called_attributes(path: Path) -> set[str]:
 
 
 def test_validator_role_cannot_file_findings() -> None:
-    called = _called_attributes(SNESS / "agents/roles/validator.py")
+    called = _called_attributes(VULNESS / "agents/roles/validator.py")
     leaked = called & FORBIDDEN_FOR_VALIDATORS
     assert not leaked, (
         f"validator.py calls {leaked}: a validator that can file findings becomes a second "
@@ -39,20 +39,20 @@ def test_validator_role_cannot_file_findings() -> None:
 
 def test_validator_records_to_validations_table() -> None:
     """It must still write its verdict somewhere -- just not into findings."""
-    called = _called_attributes(SNESS / "agents/roles/validator.py")
+    called = _called_attributes(VULNESS / "agents/roles/validator.py")
     assert "record_validation" in called
     assert "set_verdict" in called
 
 
 def test_hunter_is_the_only_role_that_files() -> None:
-    hunter = _called_attributes(SNESS / "agents/roles/hunter.py")
+    hunter = _called_attributes(VULNESS / "agents/roles/hunter.py")
     assert "file_finding" in hunter, "the hunt role is the one place findings originate"
 
-    recon = _called_attributes(SNESS / "agents/roles/recon.py")
+    recon = _called_attributes(VULNESS / "agents/roles/recon.py")
     assert "file_finding" not in recon, "recon maps the target; it does not file bugs"
 
 
 @pytest.mark.parametrize("role", ["validator", "recon"])
 def test_non_hunting_roles_never_touch_findings_table(role: str) -> None:
-    called = _called_attributes(SNESS / f"agents/roles/{role}.py")
+    called = _called_attributes(VULNESS / f"agents/roles/{role}.py")
     assert "file_finding" not in called

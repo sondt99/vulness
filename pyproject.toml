@@ -3,7 +3,7 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "s-ness"
+name = "vulness"
 version = "0.1.0"
 description = "Autonomous vulnerability-discovery harness: Claude Code hunts, GLM validates"
 readme = "README.md"
@@ -21,14 +21,14 @@ dependencies = [
 dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6"]
 
 [project.scripts]
-sness = "sness.cli:main"
+vulness = "vulness.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["sness*"]
+include = ["vulness*"]
 
 [tool.setuptools.package-data]
-sness = ["state/*.sql", "prompts/*.md", "findings/*.json"]
+vulness = ["state/*.sql", "prompts/*.md", "findings/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -49,10 +49,10 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 # Typer's entire API is function calls in argument defaults; B008 cannot apply here.
-"sness/cli.py" = ["B008"]
+"vulness/cli.py" = ["B008"]
 
 [tool.pyright]
-include = ["sness"]
+include = ["vulness"]
 exclude = ["tests/fixtures"]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"

@@ -8,7 +8,7 @@ credentials.json
 
 # --- harness state & output ---
 # Run databases, work dirs, architecture maps, PoC scratch, generated reports.
-.sness/
+.vulness/
 *.db
 *.db-wal
 *.db-shm

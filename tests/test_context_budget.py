@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from sness.agents.context_budget import (
+from vulness.agents.context_budget import (
     HARNESS_BASELINE_TOKENS,
     ContextBudget,
     Section,

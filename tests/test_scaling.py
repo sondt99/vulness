@@ -11,11 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from sness.coverage.cells import MAX_CELLS, MIN_CELLS, Area, build_grid, grid_size_for
-from sness.orchestrator.budget import Budget
-from sness.orchestrator.scheduler import FORK_SHARE_CAP, MAX_FORKS_PER_HUNT, Scheduler
-from sness.state.db import Database, new_id
-from sness.state.models import Run, Task
+from vulness.coverage.cells import MAX_CELLS, MIN_CELLS, Area, build_grid, grid_size_for
+from vulness.orchestrator.budget import Budget
+from vulness.orchestrator.scheduler import FORK_SHARE_CAP, MAX_FORKS_PER_HUNT, Scheduler
+from vulness.state.db import Database, new_id
+from vulness.state.models import Run, Task
 
 
 def test_grid_scales_with_target_size() -> None:

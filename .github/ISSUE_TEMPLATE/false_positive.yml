@@ -41,7 +41,7 @@ body:
     id: record
     attributes:
       label: The finding record
-      description: "`sness findings --json` for the finding, including its validations."
+      description: "`vulness findings --json` for the finding, including its validations."
       render: json
 
   - type: input

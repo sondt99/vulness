@@ -26,8 +26,8 @@ body:
       description: The smallest command sequence that shows the problem.
       render: shell
       placeholder: |
-        sness run ./target -b 20
-        sness findings -v candidate
+        vulness run ./target -b 20
+        vulness findings -v candidate
     validations:
       required: true
 
@@ -55,7 +55,7 @@ body:
   - type: textarea
     id: doctor
     attributes:
-      label: Output of `sness doctor`
+      label: Output of `vulness doctor`
       description: This tells us which models and sandbox were available.
       render: shell
     validations:
@@ -67,13 +67,13 @@ body:
       label: Relevant events
       description: |
         The event log usually names the cause directly. Redact paths if needed.
-        `sqlite3 .sness/sness.db "SELECT kind, payload_json FROM events ORDER BY event_id DESC LIMIT 20"`
+        `sqlite3 .vulness/vulness.db "SELECT kind, payload_json FROM events ORDER BY event_id DESC LIMIT 20"`
       render: shell
 
   - type: input
     id: version
     attributes:
       label: Versions
-      placeholder: "s-ness 0.1.0, python 3.12.3, claude 2.1.258, docker 29.8.1"
+      placeholder: "vulness 0.1.0, python 3.12.3, claude 2.1.258, docker 29.8.1"
     validations:
       required: true

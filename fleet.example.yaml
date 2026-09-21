@@ -1,6 +1,6 @@
 profile: standard  # quick | standard | deep
-db_path: ./.sness/sness.db
-work_dir: ./.sness/work
+db_path: ./.vulness/vulness.db
+work_dir: ./.vulness/work
 budget:
   tasks_per_repo: 26
   max_concurrent_agents: 6

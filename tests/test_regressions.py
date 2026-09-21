@@ -5,8 +5,8 @@ Both bugs below were found by measuring the harness against ground truth, not by
 
 from __future__ import annotations
 
-from sness.agents.classify import is_retryable
-from sness.findings import HunterFinding, compute_fingerprint
+from vulness.agents.classify import is_retryable
+from vulness.findings import HunterFinding, compute_fingerprint
 
 _SINK = dict(
     threat_model={
@@ -62,7 +62,7 @@ def test_genuinely_different_bugs_stay_distinct() -> None:
 def test_peak_occupancy_survives_non_dict_stream_events() -> None:
     """Regression: a JSONL line parsing to a bare string crashed eleven hunt tasks with
     AttributeError, because .get() was called before checking the event was a dict."""
-    from sness.agents.context_budget import peak_occupancy
+    from vulness.agents.context_budget import peak_occupancy
 
     events = [
         "a bare string line",
@@ -81,9 +81,9 @@ def test_requeue_depth_is_bounded() -> None:
     import tempfile
     from pathlib import Path
 
-    from sness.orchestrator.scheduler import MAX_ATTEMPTS, _retry_depth
-    from sness.state.db import Database, new_id
-    from sness.state.models import Run, Task
+    from vulness.orchestrator.scheduler import MAX_ATTEMPTS, _retry_depth
+    from vulness.state.db import Database, new_id
+    from vulness.state.models import Run, Task
 
     db = Database(Path(tempfile.mkdtemp()) / "t.db")
     db.create_run(Run(run_id="r", model_hunt="m", model_verify="n"))

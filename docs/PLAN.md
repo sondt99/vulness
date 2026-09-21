@@ -1,4 +1,4 @@
-# s-ness - Build Plan
+# vulness - Build Plan
 
 **An autonomous vulnerability-discovery harness.**
 Modeled on Cloudflare's VDH/VVS architecture ([blog](https://blog.cloudflare.com/build-your-own-vulnerability-harness/)), adapted to this machine and to the `security-audit-skill` prompt corpus already cloned next door.
@@ -32,7 +32,7 @@ So M1 is Recon + Hunt + Validate + DB + Report. Everything else is earned.
 
 Measured, not assumed - these numbers drive the design.
 
-| Capability | Result | Consequence for s-ness |
+| Capability | Result | Consequence for vulness |
 |---|---|---|
 | `claude` CLI | 2.1.258, `-p --output-format stream-json`, `--allowedTools`, `--permission-mode`, `--append-system-prompt`, `--add-dir`, `--mcp-config`, `--agents` | **Model A** - discovery backend |
 | `codex` CLI | 0.154.0, `exec --json --output-schema <FILE>` | **Model B** - triage backend, with *native schema-enforced output* |
@@ -41,7 +41,7 @@ Measured, not assumed - these numbers drive the design.
 | `semgrep` | installed | Use as a *cell seeder*, never as an agent tool (see §7) |
 | Python | 3.12.3, `anthropic` 0.122, `pydantic` 2.12, `mcp` 1.23, `fastmcp` 3.2 | stdlib `sqlite3`; pydantic for the findings contract |
 | Hardware | 22 cores / 62 GB | ~10 concurrent agents, ~4 concurrent sandbox containers |
-| `sqlite3` CLI | missing | Python `sqlite3` only; ship `sness db` for inspection |
+| `sqlite3` CLI | missing | Python `sqlite3` only; ship `vulness db` for inspection |
 
 **This is exactly the gotcha Cloudflare warned about**, in a different costume - they hit `seccomp=unconfined`/`apparmor=unconfined` for nested Docker; here AppArmor kills unprivileged user namespaces outright. Docker-first is not a preference, it's the only thing that works today.
 
@@ -195,16 +195,16 @@ Two properties this buys:
 ## 5. Repository layout
 
 ```
-s-ness/
-├── pyproject.toml                   # setuptools, py>=3.12, console_script: sness
+vulness/
+├── pyproject.toml                   # setuptools, py>=3.12, console_script: vulness
 ├── README.md
 ├── fleet.yaml                       # repos, budgets, profiles
 ├── docs/
 │   ├── PLAN.md                      # this file
 │   ├── ARCHITECTURE.md
 │   └── SANDBOX.md                   # the AppArmor story, container profile
-├── sness/
-│   ├── cli.py                       # sness run|resume|status|findings|wishlist|report|db
+├── vulness/
+│   ├── cli.py                       # vulness run|resume|status|findings|wishlist|report|db
 │   ├── config.py                    # pydantic-settings
 │   ├── state/
 │   │   ├── schema.sql
@@ -286,7 +286,7 @@ Enforced by tool binding at dispatch, as above. Validator verdicts go to `valida
 Mechanism: hash the target tree before the PoC runs, mount it **read-only** into the container, give the agent a writable `scratch/` only, re-hash after. Any source mutation invalidates the finding outright.
 
 **5. Sandbox that silently fails to start.**
-Already hit - see §2. `sness doctor` runs the sandbox self-test (spawn container, assert no network, assert read-only target, assert rlimits) on every startup and refuses to dispatch execution tasks if it fails. A harness that silently stops executing code degrades into a very expensive grep.
+Already hit - see §2. `vulness doctor` runs the sandbox self-test (spawn container, assert no network, assert read-only target, assert rlimits) on every startup and refuses to dispatch execution tasks if it fails. A harness that silently stops executing code degrades into a very expensive grep.
 
 ---
 
@@ -295,7 +295,7 @@ Already hit - see §2. `sness doctor` runs the sandbox self-test (spawn containe
 Each milestone ends with a working binary and a verification gate. No milestone is "done" until `pytest` and the type-check pass.
 
 ### M0 - Spine (no models)
-`pyproject.toml`, SQLite schema + migrations, task queue with leases, asyncio worker pool, event log, `sness db`/`status`. Agent backend is a **stub adapter** that replays canned JSON.
+`pyproject.toml`, SQLite schema + migrations, task queue with leases, asyncio worker pool, event log, `vulness db`/`status`. Agent backend is a **stub adapter** that replays canned JSON.
 *Exit:* a 200-task fake run completes, is killed mid-flight, and resumes losing exactly one task.
 
 ### M1 - Minimal real harness ← *the Cloudflare minimum*
@@ -303,7 +303,7 @@ Recon (×3 ∥) → Hunt → Validate → Report, one repo, `claude` backend, pr
 *Exit:* full run on a deliberately-vulnerable target produces ≥1 confirmed finding with a stated threat model, and the Validator demonstrably rejects a planted false positive.
 
 ### M2 - Sandbox + PoC contract
-`sandbox/docker.py` with the verified profile, `sness doctor`, read-only target + hash verification, artifact promotion into `artifacts/`.
+`sandbox/docker.py` with the verified profile, `vulness doctor`, read-only target + hash verification, artifact promotion into `artifacts/`.
 *Exit:* a PoC executes in-container with no network, proves a boundary violation, and a source-mutating PoC is auto-rejected.
 
 ### M3 - Coverage loop
@@ -336,7 +336,7 @@ Cloudflare runs 50-200 workers; 22 cores here means the binding constraint is **
 
 ## 10. Scope and safety posture
 
-s-ness audits **source you own or are authorized to audit**. Inherited directly from the skill's `execution_policy: sandboxed-source-and-local-only`:
+vulness audits **source you own or are authorized to audit**. Inherited directly from the skill's `execution_policy: sandboxed-source-and-local-only`:
 
 - Static analysis establishes the path; sandboxed local execution resolves behavior.
 - **No live probing** - no deployed endpoints, shared infrastructure, production identities, or third-party services. Ever.

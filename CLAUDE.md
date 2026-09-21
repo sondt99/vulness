@@ -4,7 +4,7 @@ Guidance for Claude Code working in this repository.
 
 ## What this is
 
-s-ness is an autonomous vulnerability discovery harness. Claude Code hunts, GLM validates.
+vulness is an autonomous vulnerability discovery harness. Claude Code hunts, GLM validates.
 State lives in SQLite so agents can be stateless and disposable. The design follows
 Cloudflare's published VDH/VVS architecture.
 
@@ -13,7 +13,7 @@ Read `docs/PLAN.md` for the architecture and `README.md` for usage before making
 ## Verification is not optional
 
 ```bash
-ruff check sness/ tests/ && pyright sness/ && pytest -q
+ruff check vulness/ tests/ && pyright vulness/ && pytest -q
 ```
 
 Run all three before reporting any task complete. File writes succeed even when the code
@@ -55,9 +55,9 @@ alternative produced unusable output.
 - Python 3.12, `from __future__ import annotations`, full type hints, 100 columns.
 - Comments explain why, never what. Delete any comment that restates its code.
 - No em dashes anywhere in this project. Use a colon, a comma, or a hyphen.
-- `sness/agents/roles/hunter.py` is the reference for voice and structure.
+- `vulness/agents/roles/hunter.py` is the reference for voice and structure.
 
 ## Never commit
 
-`.env`, `.sness/`, or `fleet.yaml`. All three are git ignored. Findings are unpatched
+`.env`, `.vulness/`, or `fleet.yaml`. All three are git ignored. Findings are unpatched
 vulnerability reports; treat run artifacts as sensitive.

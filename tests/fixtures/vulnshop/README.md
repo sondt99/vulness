@@ -2,7 +2,7 @@
 
 **DO NOT DEPLOY THIS. DO NOT COPY THIS CODE.**
 
-Every defect here is intentional. This exists so s-ness can be measured against known
+Every defect here is intentional. This exists so vulness can be measured against known
 ground truth rather than judged on how convincing its output reads.
 
 It is a fixture, not an application: no entry point, no dependencies installed, never
@@ -34,8 +34,8 @@ That was a fixture defect found by the harness judging its own calibration targe
 ## Running the calibration
 
 ```bash
-sness run tests/fixtures/vulnshop -b 42 --gapfill 1
-sness findings -v confirmed
+vulness run tests/fixtures/vulnshop -b 42 --gapfill 1
+vulness findings -v confirmed
 ```
 
 A healthy run finds 1, 2 and 3, and says nothing about 4. Anything reported against the

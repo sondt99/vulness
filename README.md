@@ -1,4 +1,4 @@
-# s-ness
+# vulness
 
 An autonomous vulnerability-discovery harness. Two models, one database.
 
@@ -17,7 +17,7 @@ Point any frontier model at a repo and it finds bugs for about an hour. Then the
 window fills, it starts forgetting what it found, and it confidently validates its own
 false positives. A harness fixes that structurally:
 
-| Failure | Answer in s-ness |
+| Failure | Answer in vulness |
 |---|---|
 | Context exhaustion | All state in SQLite. Agents are stateless, disposable, and stay under ~25% of their window. |
 | Self-grading | The validator **cannot file findings** - enforced by an AST test, not a prompt. |
@@ -31,7 +31,7 @@ false positives. A harness fixes that structurally:
 pip install -e .
 export GLM_API_KEY=...          # Z.AI Coding Plan key
 claude --version                # must be logged in (subscription, not an API key)
-sness doctor                    # verifies both models + the sandbox before you spend a run
+vulness doctor                    # verifies both models + the sandbox before you spend a run
 ```
 
 `doctor` is not decorative. It starts a container and asserts the network is actually
@@ -41,13 +41,13 @@ fails to start turns the whole harness into a very expensive `grep`.
 ## Use
 
 ```bash
-sness run /path/to/repo              # recon -> hunt -> validate -> report
-sness run /path/to/repo -b 40 -g 2   # bigger budget, two gapfill passes
-sness status                         # where the last run got to
-sness findings -v confirmed          # what survived validation
-sness findings -v rejected           # what the validator killed, and why
-sness wishlist                       # what agents asked for and did not get
-sness report -o REPORT.md
+vulness run /path/to/repo              # recon -> hunt -> validate -> report
+vulness run /path/to/repo -b 40 -g 2   # bigger budget, two gapfill passes
+vulness status                         # where the last run got to
+vulness findings -v confirmed          # what survived validation
+vulness findings -v rejected           # what the validator killed, and why
+vulness wishlist                       # what agents asked for and did not get
+vulness report -o REPORT.md
 ```
 
 ## How a run works
@@ -80,8 +80,8 @@ Three levels, cheapest first.
 
 ```bash
 pytest -q                     # 39 tests, under a second
-ruff check sness/ tests/
-pyright sness/
+ruff check vulness/ tests/
+pyright vulness/
 ```
 
 What they actually guard: that only the hunt role can file findings, that every declared
@@ -91,7 +91,7 @@ live run has exposed.
 **2. Environment self-test.** Touches both models and starts a container. Effectively free.
 
 ```bash
-sness doctor
+vulness doctor
 ```
 
 Four checks, and it refuses to dispatch execution tasks if the sandbox fails, because a
@@ -101,8 +101,8 @@ sandbox that silently does not start turns the harness into a very expensive gre
 measures whether the harness is any good.
 
 ```bash
-sness run tests/fixtures/vulnshop -b 42 --gapfill 1
-sness findings -v confirmed
+vulness run tests/fixtures/vulnshop -b 42 --gapfill 1
+vulness findings -v confirmed
 ```
 
 `tests/fixtures/vulnshop/README.md` lists the planted defects, including one decoy that
@@ -116,7 +116,7 @@ Measured against a target with known ground truth (2 planted bugs + 1 crypto dec
 - Found the unauthenticated SQL injection, the `../` path traversal, and an auth bypass
   the author had written by accident.
 - Did **not** flag the planted `hmac.compare_digest` decoy.
-- Two defects this surfaced in s-ness itself - attack class splitting one bug into three
+- Two defects this surfaced in vulness itself - attack class splitting one bug into three
   identities, and `schema_invalid` being treated as fatal - are now regression tests.
 
 ## Status

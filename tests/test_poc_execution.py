@@ -12,23 +12,23 @@ from pathlib import Path
 
 import pytest
 
-from sness.findings.poc import POC_TO_VALIDATION, PocOutcome, execute_poc
-from sness.findings.schema import PoC
+from vulness.findings.poc import POC_TO_VALIDATION, PocOutcome, execute_poc
+from vulness.findings.schema import PoC
 
-SNESS = Path(__file__).resolve().parents[1] / "sness"
+VULNESS = Path(__file__).resolve().parents[1] / "vulness"
 
 
 def test_run_poc_has_a_live_call_path() -> None:
     """Regression: the sandbox was fully built, passed its self-test, and was never
     called by anything. PoCs were collected, stored, shown to the validator as text --
     and never executed."""
-    tree = ast.parse((SNESS / "findings/poc.py").read_text())
+    tree = ast.parse((VULNESS / "findings/poc.py").read_text())
     called = {
         n.func.attr for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
     }
     assert "run_poc" in called, "poc.py must actually invoke the sandbox"
 
-    hunter = ast.parse((SNESS / "agents/roles/hunter.py").read_text())
+    hunter = ast.parse((VULNESS / "agents/roles/hunter.py").read_text())
     hunter_calls = {
         n.func.id for n in ast.walk(hunter) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
     }

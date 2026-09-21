@@ -1,9 +1,9 @@
 # Security Policy
 
-s-ness is a security tool. That cuts two ways: it has its own attack surface, and it can
+vulness is a security tool. That cuts two ways: it has its own attack surface, and it can
 be pointed at things it should not be pointed at. This document covers both.
 
-## Reporting a vulnerability in s-ness
+## Reporting a vulnerability in vulness
 
 Please use a [private security advisory](https://github.com/sondt99/vulnnes/security/advisories/new).
 Do not open a public issue.
@@ -33,10 +33,10 @@ one of these boundaries is in scope:
   [their own issue template](.github/ISSUE_TEMPLATE/false_positive.yml).
 - Model behaviour we do not control, such as a model refusing a prompt.
 - Cost or rate limit exhaustion from running the harness without a budget.
-- Findings produced by s-ness about *other* projects. Report those to the project that
+- Findings produced by vulness about *other* projects. Report those to the project that
   owns the code.
 
-## Using s-ness responsibly
+## Using vulness responsibly
 
 The harness is built for auditing code you own or are explicitly authorised to audit.
 
@@ -58,7 +58,7 @@ liability, and the design will not help you hide it.
 
 Findings are unpatched vulnerability reports. Treat the run artifacts accordingly:
 
-- `.sness/` is git ignored by default. Keep it that way.
+- `.vulness/` is git ignored by default. Keep it that way.
 - Do not paste findings into public issues. Reduce to a synthetic example first.
 - Patches from the `fix` stage are proposals for human review. Nothing in the harness can
   merge them, and that gate is deliberate.

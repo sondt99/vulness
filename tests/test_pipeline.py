@@ -14,18 +14,18 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SNESS = ROOT / "sness"
+VULNESS = ROOT / "vulness"
 
 
 def _declared_kinds() -> set[str]:
-    src = (SNESS / "state/models.py").read_text()
+    src = (VULNESS / "state/models.py").read_text()
     block = re.search(r"TaskKind = Literal\[(.*?)\]", src, re.S)
     assert block, "TaskKind literal not found"
     return set(re.findall(r'"(\w+)"', block.group(1)))
 
 
 def _routed_kinds() -> set[str]:
-    src = (SNESS / "orchestrator/scheduler.py").read_text()
+    src = (VULNESS / "orchestrator/scheduler.py").read_text()
     block = re.search(r"_HANDLERS: dict\[.*?\] = \{(.*?)\n\}", src, re.S)
     assert block, "_HANDLERS table not found"
     return set(re.findall(r'"(\w+)":', block.group(1)))
@@ -47,9 +47,9 @@ def test_all_eight_discovery_stages_plus_triage_exist() -> None:
     for module in (
         "recon", "hunter", "validator", "feedback", "trace", "judge", "fixer", "dedup",
     ):
-        assert (SNESS / f"agents/roles/{module}.py").is_file(), f"missing role: {module}"
-    assert (SNESS / "report/render.py").is_file()
-    assert (SNESS / "coverage/cells.py").is_file(), "gapfill lives in the coverage grid"
+        assert (VULNESS / f"agents/roles/{module}.py").is_file(), f"missing role: {module}"
+    assert (VULNESS / "report/render.py").is_file()
+    assert (VULNESS / "coverage/cells.py").is_file(), "gapfill lives in the coverage grid"
 
 
 @pytest.mark.parametrize(
@@ -58,7 +58,7 @@ def test_all_eight_discovery_stages_plus_triage_exist() -> None:
 def test_only_the_hunter_files_findings(role: str) -> None:
     """Write isolation, extended to every stage added since. Findings originate in exactly
     one place; everything else records verdicts."""
-    tree = ast.parse((SNESS / f"agents/roles/{role}.py").read_text())
+    tree = ast.parse((VULNESS / f"agents/roles/{role}.py").read_text())
     called = {
         n.func.attr
         for n in ast.walk(tree)
@@ -73,10 +73,10 @@ def test_every_role_has_a_prompt_template() -> None:
         ("feedback", "feedback"), ("trace", "trace"), ("judge", "judge"),
         ("fixer", "fixer"), ("dedup", "dedup"),
     ):
-        assert (SNESS / f"prompts/{template}.md").is_file(), f"{role} has no prompt template"
+        assert (VULNESS / f"prompts/{template}.md").is_file(), f"{role} has no prompt template"
 
 
 def test_fixer_never_writes_to_the_target_repo() -> None:
     """A patch is a proposal for human review. The harness is read-only against targets."""
-    src = (SNESS / "agents/roles/fixer.py").read_text()
+    src = (VULNESS / "agents/roles/fixer.py").read_text()
     assert "work_dir" in src, "fixer must write patches under work_dir"
