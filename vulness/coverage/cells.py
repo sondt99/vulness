@@ -290,6 +290,7 @@ def thin_cells(
     *,
     min_hunts: int = 1,
     prior: dict[str, dict] | None = None,
+    area_yield: dict[str, int] | None = None,
 ) -> list[Cell]:
     """Cells Gapfill should revisit, ordered by how little is known about them.
 
@@ -301,8 +302,14 @@ def thin_cells(
     it each run rediscovers the same gaps in the same order and the twentieth run explores
     exactly what the first one did. With it, a cell nobody has ever hunted outranks one
     that was swept last week, which is the whole point of running repeatedly.
+
+    `area_yield` is confirmed findings per area, across every run. Coverage alone treats a
+    subsystem that produced three criticals exactly like one that produced nothing, and
+    then deprioritises it for having been hunted. Weakness clusters, so an area that has
+    already broken once is worth more attack classes, not fewer.
     """
     prior = prior or {}
+    yields = area_yield or {}
 
     def never_hunted_ever(c: Cell) -> bool:
         return c.hunter_tasks == 0 and prior.get(c.cell_id, {}).get("hunts", 0) == 0
@@ -318,6 +325,11 @@ def thin_cells(
         for c in cells
         if 0 < c.hunter_tasks <= min_hunts and c.findings_count == 0 and c.status != "covered"
     ]
-    # Least-explored first, and within "seen before" prefer the ones seen least often.
-    never_this_run.sort(key=lambda c: prior.get(c.cell_id, {}).get("hunts", 0))
+    # Least-explored first, but within each tier let a proven-weak area jump the queue: a
+    # new attack class against known-bad code beats another pass over quiet code.
+    def rank(c: Cell) -> tuple[int, int]:
+        return (-yields.get(c.area, 0), prior.get(c.cell_id, {}).get("hunts", 0))
+
+    virgin.sort(key=rank)
+    never_this_run.sort(key=rank)
     return virgin + never_this_run + barren

@@ -23,6 +23,8 @@ wander: record it in `out_of_scope_leads` and keep going.
 
 {sandbox_block}
 
+{history_block}
+
 ## Before you may file anything
 
 State the threat model first. If you cannot fill in all three of these, you do not have a

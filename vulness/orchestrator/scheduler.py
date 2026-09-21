@@ -492,7 +492,10 @@ class Scheduler:
             # Any candidate still unvalidated outranks new hunting.
             added += self.enqueue_pending_validations(repo_id)
             prior = self.db.prior_coverage(repo_id)
-            for cell in thin_cells(self.db.cells(self.run_id, repo_id), prior=prior):
+            yields = self.db.area_yield(repo_id)
+            for cell in thin_cells(
+                self.db.cells(self.run_id, repo_id), prior=prior, area_yield=yields
+            ):
                 if not self.budget.can_dispatch(repo_id, "hunt").allowed:
                     break
                 self.db.enqueue(

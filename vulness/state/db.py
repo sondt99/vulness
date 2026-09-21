@@ -529,6 +529,47 @@ class Database:
         row = self.one(sql + " ORDER BY created_at DESC LIMIT 1", params)
         return Finding.from_row(row) if row else None
 
+    def weakness_digest(self, repo_id: str, *, limit: int = 12) -> list[dict]:
+        """What every previous run of this repository actually proved, by area.
+
+        Weakness clusters. A subsystem that turned out to mishandle one trust boundary
+        usually mishandles others, and a hunter that knows "this area already yielded an
+        auth bypass" looks differently at the code beside it. Without this, each run meets
+        the repository as a stranger and re-derives the same surprise.
+        """
+        rows = self.query(
+            "SELECT area, attack_class, title, severity_json, fingerprint, run_id"
+            " FROM findings WHERE repo_id=? AND verdict='confirmed'"
+            " ORDER BY created_at DESC LIMIT ?",
+            (repo_id, limit),
+        )
+        out = []
+        for r in rows:
+            try:
+                sev = json.loads(r["severity_json"] or "{}").get("overall_severity", "unrated")
+            except json.JSONDecodeError:
+                sev = "unrated"
+            out.append(
+                {
+                    "area": r["area"] or "?",
+                    "attack_class": r["attack_class"] or "?",
+                    "title": r["title"],
+                    "severity": sev,
+                }
+            )
+        return out
+
+    def area_yield(self, repo_id: str) -> dict[str, int]:
+        """Confirmed findings per area, across every run. Drives where to look harder."""
+        return {
+            r["area"]: int(r["n"])
+            for r in self.query(
+                "SELECT area, COUNT(*) n FROM findings WHERE repo_id=? AND verdict='confirmed'"
+                " AND area IS NOT NULL GROUP BY area",
+                (repo_id,),
+            )
+        }
+
     def record_coverage(
         self, repo_id: str, cell_id: str, *, head_sha: str | None, run_id: str, findings: int
     ) -> None:

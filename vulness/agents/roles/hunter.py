@@ -37,6 +37,42 @@ from vulness.state.models import Finding, Task, Validation, Wish, now
 _SHALLOW_SECONDS = 25.0
 
 
+def _history_block(ctx: RoleContext, task: Task, area: str) -> str:
+    """What previous runs of this repository already proved.
+
+    Reconnaissance describes the code as written. This describes the code as it has
+    actually failed, which is different information and only exists after the first run.
+    Weakness clusters: a subsystem that mishandled one trust boundary usually mishandles
+    others, and a hunter that knows this area already yielded an auth bypass reads the
+    code beside it differently.
+
+    Deliberately not a list of bugs to re-report. The fingerprint check already refuses
+    duplicates, so the value here is the pattern, not the record.
+    """
+    digest = ctx.db.weakness_digest(task.repo_id)
+    if not digest:
+        return ""
+    here = [d for d in digest if d["area"] == area]
+    lines = [
+        "## What earlier runs proved about this repository",
+        "",
+        "These are confirmed, already filed, and must NOT be reported again. They are here",
+        "because the mistakes a codebase makes tend to repeat: look for the same reasoning",
+        "applied elsewhere, and for the weaknesses that sit next to a known one.",
+        "",
+    ]
+    for d in digest[:8]:
+        mark = " **(your area)**" if d["area"] == area else ""
+        lines.append(f"- `{d['severity']}` {d['attack_class']} in {d['area']}{mark}: {d['title']}")
+    if here:
+        lines += [
+            "",
+            f"This area has already broken {len(here)} time(s). Treat its assumptions as "
+            "suspect rather than as established.",
+        ]
+    return "\n".join(lines)
+
+
 def _architecture_block(ctx: RoleContext, task: Task) -> str:
     path = ctx.settings.work_dir / task.run_id / task.repo_id / "architecture.md"
     if not path.is_file():
@@ -108,6 +144,7 @@ async def run_hunt(ctx: RoleContext, task: Task) -> TaskOutcome:
         architecture_block="{ARCHITECTURE}",
         companion_block="{COMPANION}",
         sandbox_block="{SANDBOX}",
+        history_block="{HISTORY}",
     )
     lead = seed.get("lead")
 
@@ -118,7 +155,8 @@ async def run_hunt(ctx: RoleContext, task: Task) -> TaskOutcome:
     budget = ContextBudget(ctx.settings.hunt.model, occupancy=ctx.settings.budget.context_occupancy)
     head, _, tail = instruction.partition("{ARCHITECTURE}")
     mid, _, rest = tail.partition("{COMPANION}")
-    companion_tail, _, foot = rest.partition("{SANDBOX}")
+    companion_tail, _, after_sandbox = rest.partition("{SANDBOX}")
+    sandbox_tail, _, foot = after_sandbox.partition("{HISTORY}")
     # The sandbox block sits inline, before the output contract rather than appended after
     # it. Placed last it read as an appendix and hunters invoked it zero times across a
     # whole run; the capability existed and went unused because of where it was printed.
@@ -137,6 +175,10 @@ async def run_hunt(ctx: RoleContext, task: Task) -> TaskOutcome:
         # trimmed away, will invent an invocation and report its failure as a finding.
         Section("sandbox", shim_block or "_No sandbox available; reason from source only._",
                 priority=0),
+        Section("instruction_sandbox_tail", sandbox_tail, priority=0),
+        # Trimmed before the playbook: on a first run it is empty anyway, and on later runs
+        # a truncated history still carries its most severe entries, which are listed first.
+        Section("history", _history_block(ctx, task, area), priority=4, floor_chars=600),
         Section("instruction_tail", foot, priority=0),
     ]
     # The Feedback stage rewrites queued task prompts in place. Hunts are re-rendered from

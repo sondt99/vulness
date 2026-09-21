@@ -118,3 +118,49 @@ def test_gapfill_prefers_cells_nobody_has_ever_hunted() -> None:
     order = [c.cell_id for c in thin_cells(cells, prior={"c0": {"hunts": 5}, "c1": {"hunts": 1}})]
     assert order[:2] == ["c2", "c3"], order
     assert order.index("c1") < order.index("c0"), "least-hunted first among the seen"
+
+
+# ---------------- learning across loops ----------------
+
+
+def test_weakness_digest_reports_only_confirmed_findings(db: Database) -> None:
+    """A rejected claim is not something to steer the next run toward."""
+    _file(db, "r1", "fp_real", verdict="confirmed")
+    _file(db, "r1", "fp_fake", verdict="rejected")
+    assert len(db.weakness_digest("repo")) == 1
+
+
+def test_area_yield_counts_confirmed_per_area(db: Database) -> None:
+    for i, (area, verdict) in enumerate(
+        [("auth", "confirmed"), ("auth", "confirmed"), ("quiet", "rejected")]
+    ):
+        db.file_finding(
+            Finding(
+                finding_id=new_id("f"), run_id="r1", repo_id="repo", task_id="t",
+                fingerprint=f"fp{i}", title="A specific and repeatable title", area=area,
+                threat_model_json={"attacker": "a", "boundary": "b", "broken_assumption": "c"},
+                verdict=verdict, created_at=now(),
+            )
+        )
+    assert db.area_yield("repo") == {"auth": 2}
+
+
+def test_gapfill_looks_harder_where_the_repo_already_broke() -> None:
+    """Coverage alone treats a subsystem that produced three criticals exactly like one
+    that produced nothing, then deprioritises it for having been hunted. Weakness
+    clusters, so a proven-weak area is worth more attack classes, not fewer."""
+    cells = [
+        Cell(run_id="r", repo_id="repo", cell_id="c0", area="quiet", attack_class="x"),
+        Cell(run_id="r", repo_id="repo", cell_id="c1", area="auth", attack_class="y"),
+    ]
+    order = [c.area for c in thin_cells(cells, prior={}, area_yield={"auth": 3})]
+    assert order[0] == "auth", order
+
+
+def test_area_yield_absent_on_a_first_run_changes_nothing() -> None:
+    """The first run of a repository has no history and must behave exactly as before."""
+    cells = [
+        Cell(run_id="r", repo_id="repo", cell_id=f"c{i}", area=f"a{i}", attack_class="x")
+        for i in range(3)
+    ]
+    assert [c.cell_id for c in thin_cells(cells, prior={}, area_yield={})] == ["c0", "c1", "c2"]
