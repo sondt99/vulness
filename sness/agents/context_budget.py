@@ -207,8 +207,17 @@ def peak_occupancy(raw_events: list[dict[str, Any]]) -> int:
         # Observed live: eleven hunt tasks crashed here on real CLI output.
         if not isinstance(event, dict):
             continue
+        # ONLY per-turn assistant usage. The terminal `result` event carries a usage block
+        # too, but its counters are summed across the whole session: measured on claude
+        # 2.1.258, two turns reporting cache_read 12,070 and 24,082 produced a result event
+        # reading 36,152. Treating that as occupancy reported 353% of a 200k window and
+        # raised 19 false "context exceeded" alerts before this was caught.
+        if event.get("type") == "result":
+            continue
         message = event.get("message")
-        usage = (message if isinstance(message, dict) else {}).get("usage") or event.get("usage")
+        if not isinstance(message, dict):
+            continue
+        usage = message.get("usage")
         if not isinstance(usage, dict):
             continue
         turn = (

@@ -88,3 +88,19 @@ def test_unknown_model_gets_conservative_window() -> None:
     """An overestimated window lets an agent quietly fill its context; underestimating
     only trims early."""
     assert window_for("some-future-model") < window_for("sonnet")
+
+
+def test_peak_occupancy_ignores_the_cumulative_result_event() -> None:
+    """Regression: the terminal `result` event's usage is summed across the session, not
+    per turn. Counting it reported 353% of a 200k window and produced 19 false alerts.
+
+    Verified against claude 2.1.258: turns reporting cache_read 12,070 and 24,082 yielded
+    a result event reading 36,152, which is their sum.
+    """
+    events = [
+        {"type": "assistant", "message": {"usage": {"input_tokens": 2, "cache_creation_input_tokens": 12_012, "cache_read_input_tokens": 12_070}}},
+        {"type": "assistant", "message": {"usage": {"input_tokens": 2, "cache_creation_input_tokens": 2_631, "cache_read_input_tokens": 24_082}}},
+        {"type": "result", "usage": {"input_tokens": 4, "cache_read_input_tokens": 36_152}},
+    ]
+    assert peak_occupancy(events) == 26_715  # the larger real turn, not the 36k rollup
+    assert occupancy_fraction(peak_occupancy(events), "sonnet") < 0.25
