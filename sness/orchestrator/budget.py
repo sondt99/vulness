@@ -31,13 +31,15 @@ class Budget:
 
     def can_dispatch(self, repo_id: str, kind: str) -> BudgetDecision:
         """Validation and recon are never starved; hunting is what gets throttled."""
+        # Triage and validation are bounded by how many findings exist, not by how many
+        # cells the grid invented, so they cannot run away. Hunting is the unbounded thing,
+        # and it is the only thing this budget exists to throttle.
+        if kind in ("validate", "recon", "judge", "dedup", "fix", "feedback", "trace"):
+            return BudgetDecision(True)
+
         remaining = self.remaining(repo_id)
         if remaining <= 0:
             return BudgetDecision(False, f"per-repo budget exhausted ({self.per_repo} tasks)")
-
-        # Validators and recon spend from the reserve; only hunts are held back by it.
-        if kind in ("validate", "recon", "judge", "dedup", "fix", "feedback", "trace"):
-            return BudgetDecision(True)
 
         reserve = int(self.per_repo * self.validator_reserve)
         unvalidated = len(self.db.findings(self.run_id, verdict="candidate", repo_id=repo_id))

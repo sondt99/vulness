@@ -169,13 +169,36 @@ def discover_areas(repo: Path, max_areas: int = 12, scope_paths: list[str] | Non
     return areas[:max_areas]
 
 
+# One cell is roughly one hunter assignment, so the grid size IS the cost of a run. A
+# flat cap spends the same on a 100-line fixture as on a 30k-line service: measured at 80
+# cells against a 102-line target, of which 6 were ever reached. Scale with the work.
+MIN_CELLS = 6
+MAX_CELLS = 120
+FILES_PER_CELL = 8
+
+
+def grid_size_for(total_files: int, *, files_per_cell: int = FILES_PER_CELL) -> int:
+    """How many cells a target of this size justifies.
+
+    File count is the proxy for size: it is already collected during area discovery, and it
+    tracks structural surface better than line count, which one vendored or generated file
+    can dominate.
+
+    Growth is deliberately sublinear. A cell is an (area x attack-class) pair, and areas
+    grow far more slowly than files do: a repo with ten times the files has a handful more
+    subsystems, not ten times as many. Linear growth produced 144 cells for a 120-file
+    project, which is a budget nobody would choose to spend.
+    """
+    return max(MIN_CELLS, min(MAX_CELLS, MIN_CELLS + total_files // files_per_cell))
+
+
 def build_grid(
     run_id: str,
     repo_id: str,
     areas: list[Area],
     *,
     extra_classes: list[str] | None = None,
-    max_cells: int = 80,
+    max_cells: int | None = None,
 ) -> list[Cell]:
     """Cross areas with the attack classes their languages make plausible.
 
@@ -185,6 +208,8 @@ def build_grid(
     """
     cells: list[Cell] = []
     extras = [slug(c) for c in (extra_classes or [])]
+    if max_cells is None:
+        max_cells = grid_size_for(sum(a.files for a in areas))
 
     for area in areas:
         classes = area.biased_classes()

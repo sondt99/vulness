@@ -108,23 +108,40 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 def cmd_run(args: argparse.Namespace) -> int:
     """Audit a repository end to end."""
     settings, db = _load(args.config)
-    repo = Path(args.repo).resolve()
-    if not repo.is_dir():
-        console.print(f"[red]not a directory:[/] {repo}")
+    # Targets come from the command line, or from fleet.yaml when none are named. The
+    # budget is per repo, so adding a repo adds its own allowance rather than diluting
+    # everyone else's: cross-repo tracing is only meaningful once there are several.
+    raw_targets = [Path(r) for r in (args.repo or [])]
+    if not raw_targets:
+        raw_targets = [rc.path for rc in settings.repos if rc.enabled]
+    if not raw_targets:
+        console.print("[red]no targets.[/] Name a repository, or list repos: in fleet.yaml")
         return 1
     if args.budget:
         settings.budget.tasks_per_repo = args.budget
 
-    repo_id = _repo_id(repo)
+    repos: dict[str, Path] = {}
+    for raw in raw_targets:
+        repo = raw.resolve()
+        if not repo.is_dir():
+            console.print(f"[red]not a directory:[/] {repo}")
+            return 1
+        repo_id = _repo_id(repo)
+        if repo_id in repos:
+            console.print(f"[red]duplicate repo name:[/] {repo_id}. Names must be unique.")
+            return 1
+        repos[repo_id] = repo
+        db.upsert_repo(
+            repo_id,
+            name=repo_id,
+            path=str(repo),
+            git_remote=_git(repo, "config", "--get", "remote.origin.url"),
+            head_sha=_git(repo, "rev-parse", "HEAD"),
+            dirty=bool(_git(repo, "status", "--porcelain")),
+        )
+    repo = next(iter(repos.values()))
+    repo_id = next(iter(repos))
     head = _git(repo, "rev-parse", "HEAD")
-    db.upsert_repo(
-        repo_id,
-        name=repo_id,
-        path=str(repo),
-        git_remote=_git(repo, "config", "--get", "remote.origin.url"),
-        head_sha=head,
-        dirty=bool(_git(repo, "status", "--porcelain")),
-    )
 
     if args.resume:
         run_id = args.resume
@@ -145,11 +162,16 @@ def cmd_run(args: argparse.Namespace) -> int:
                 config_json={"repo": str(repo), "head": head},
             )
         )
-        console.print(f"[green]run[/] {run_id} \u00b7 {repo_id} @ {(head or 'no-git')[:8]}")
+        if len(repos) == 1:
+            console.print(f"[green]run[/] {run_id} \u00b7 {repo_id} @ {(head or 'no-git')[:8]}")
+        else:
+            console.print(
+                f"[green]run[/] {run_id} \u00b7 {len(repos)} repos: {', '.join(repos)}"
+            )
 
     asyncio.run(
         _execute(
-            settings, db, run_id, repo_id, repo, args.gapfill,
+            settings, db, run_id, repos, args.gapfill,
             triage=not args.no_triage, fix=args.fix,
         )
     )
@@ -178,8 +200,7 @@ async def _execute(
     settings: Settings,
     db: Database,
     run_id: str,
-    repo_id: str,
-    repo: Path,
+    repos: dict[str, Path],
     gapfill: int,
     *,
     triage: bool = True,
@@ -211,27 +232,23 @@ async def _execute(
     if sandbox is not None:
         from sness.sandbox.policy import SourceIntegrity
 
-        baselines[repo_id] = await asyncio.to_thread(SourceIntegrity.snapshot, repo)
-        db.event(
-            "source.baseline",
-            run_id=run_id,
-            repo_id=repo_id,
-            files=len(baselines[repo_id]),
-        )
+        for rid, rpath in repos.items():
+            baselines[rid] = await asyncio.to_thread(SourceIntegrity.snapshot, rpath)
+            db.event("source.baseline", run_id=run_id, repo_id=rid, files=len(baselines[rid]))
 
     ctx = RoleContext(
         db=db,
         settings=settings,
         hunt_agent=hunt,
         verify_agent=verify,
-        repo_paths={repo_id: repo},
+        repo_paths=dict(repos),
         sandbox=sandbox,
         repo_baselines=baselines,
     )
     try:
         await Scheduler(
             ctx, run_id, gapfill_passes=gapfill, triage=triage, fix=fix
-        ).run([repo_id])
+        ).run(list(repos))
     finally:
         await verify.aclose()
 
@@ -359,7 +376,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     r = common(sub.add_parser("run", help="audit a repository end to end"))
-    r.add_argument("repo", help="repository to audit")
+    r.add_argument(
+        "repo",
+        nargs="*",
+        help="repositories to audit. Omit to use the repos listed in fleet.yaml. "
+        "Two or more enables cross-repo tracing.",
+    )
     r.add_argument("-b", "--budget", type=int, help="max agent tasks for this repo")
     r.add_argument("-g", "--gapfill", type=int, default=1, help="gapfill passes")
     r.add_argument("--resume", help="continue an existing run_id")

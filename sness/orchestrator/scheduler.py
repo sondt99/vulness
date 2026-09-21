@@ -54,6 +54,13 @@ _HANDLERS: dict[str, Callable[[RoleContext, Task], Awaitable[TaskOutcome]]] = {
 }
 
 
+# Cloudflare measures sibling forking at ~9% of fleet tasks, up to about a fifth
+# depending on the model. Uncapped, this harness hit 33%: a third of the run chasing
+# tangents while planned cells went unhunted, because forks compete for the same budget.
+FORK_SHARE_CAP = 0.20
+MAX_FORKS_PER_HUNT = 3
+
+
 def _retry_depth(task: Task) -> int:
     """How many times this task has already been re-filed, across the whole chain."""
     return int((task.seed_json or {}).get("retry_depth", 0))
@@ -297,7 +304,7 @@ class Scheduler:
             self._maybe_enqueue_feedback(task.repo_id)
             # Sibling forking: a lead becomes a fresh task with a clean context window,
             # instead of the current hunter wandering off its own cell.
-            for lead in outcome.leads[:4]:
+            for lead in outcome.leads[: self._fork_allowance()]:
                 self.db.enqueue(
                     Task(
                         task_id=new_id("t"),
@@ -325,6 +332,23 @@ class Scheduler:
     # would spend a task to tell hunters what one unlucky agent did once.
     _FEEDBACK_MIN_REJECTIONS = 4
     _FEEDBACK_MAX_PASSES = 2
+
+    def _fork_allowance(self) -> int:
+        """How many leads this hunt may spawn, given how fork-heavy the run already is.
+
+        Returns 0 once forks exceed their share, so a productive-looking hunter cannot
+        crowd out the coverage plan it was supposed to be serving.
+        """
+        row = self.db.one(
+            "SELECT COUNT(*) c FROM tasks WHERE run_id=? AND origin='sibling_fork'",
+            (self.run_id,),
+        )
+        forks = int(row["c"]) if row else 0
+        total = self.db.one("SELECT COUNT(*) c FROM tasks WHERE run_id=?", (self.run_id,))
+        seen = int(total["c"]) if total else 0
+        if seen and forks / seen >= FORK_SHARE_CAP:
+            return 0
+        return MAX_FORKS_PER_HUNT
 
     def _maybe_enqueue_feedback(self, repo_id: str) -> None:
         """Rewrite queued prompts from what validation has been rejecting.
@@ -369,6 +393,11 @@ class Scheduler:
         Runs once, after discovery has drained. Triage on a partial finding set would
         dedup against records that do not exist yet and judge findings the hunt has not
         finished producing.
+
+        Triage tasks are exempt from the hunt budget. Observed otherwise: 102 of 132 tasks
+        were budget-abandoned during discovery and triage never ran at all, so confirmed
+        findings were never judged. Discovery that consumes the whole budget and leaves its
+        output untriaged has produced a pile of unreviewed claims, not a result.
         """
         if not self.triage or self._triage_done:
             return False
