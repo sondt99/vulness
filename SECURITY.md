@@ -5,7 +5,7 @@ be pointed at things it should not be pointed at. This document covers both.
 
 ## Reporting a vulnerability in vulness
 
-Please use a [private security advisory](https://github.com/sondt99/vulnnes/security/advisories/new).
+Please use a [private security advisory](https://github.com/sondt99/vulness/security/advisories/new).
 Do not open a public issue.
 
 Include the version, the affected component, and the smallest reproduction you can manage.

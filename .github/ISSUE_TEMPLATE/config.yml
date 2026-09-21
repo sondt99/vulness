@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: Report a vulnerability in vulness itself
-    url: https://github.com/sondt99/vulnnes/security/advisories/new
+    url: https://github.com/sondt99/vulness/security/advisories/new
     about: Please use a private security advisory, not a public issue. See SECURITY.md.
