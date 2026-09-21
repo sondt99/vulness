@@ -9,6 +9,9 @@ credentials.json
 # --- harness state & output ---
 # Run databases, work dirs, architecture maps, PoC scratch, generated reports.
 .vulness/
+# Also ignore run output by shape, not just by name: renaming the state dir above must
+# never un-ignore artifacts already on disk.
+**/work/run_*/
 *.db
 *.db-wal
 *.db-shm

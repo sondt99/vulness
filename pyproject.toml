@@ -33,6 +33,10 @@ vulness = ["state/*.sql", "prompts/*.md", "findings/*.json"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# pytest prepends tests/ to sys.path, not the repo root, so a bare `pytest` outside an
+# editable install cannot import vulness. CI installs the package first; local runs do not,
+# and local is where the verification gate actually runs.
+pythonpath = ["."]
 # tests/fixtures holds deliberately vulnerable code used as a calibration target.
 # It is data, never collected and never imported.
 norecursedirs = ["fixtures"]
