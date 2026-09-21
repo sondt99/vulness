@@ -16,7 +16,13 @@ TaskOrigin = Literal[
     "seed", "gapfill", "sibling_fork", "feedback", "trace", "requeue_shallow", "requeue_error"
 ]
 ExitReason = Literal["ok", "api_error_text", "timeout", "empty", "schema_invalid", "crash", "budget"]
-Verdict = Literal["candidate", "confirmed", "rejected", "needs_validation", "duplicate"]
+# "latent" is a dangerous capability behind a gate that currently holds. It is not a
+# vulnerability and no report presents it as one; it exists because the step that turns a
+# leak into code execution is never independently exploitable, so it never becomes a
+# finding, and a composer reading only findings can never see it.
+Verdict = Literal[
+    "candidate", "confirmed", "rejected", "needs_validation", "duplicate", "latent"
+]
 CellStatus = Literal["planned", "assigned", "covered", "thin", "deferred", "out_of_scope"]
 
 

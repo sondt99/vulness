@@ -100,3 +100,20 @@ def test_chain_stage_does_not_file_findings() -> None:
     }
     assert "file_finding" not in called
     assert "file_chain" in called
+
+
+def test_latent_primitives_are_never_reported_as_vulnerabilities() -> None:
+    """A gated capability is not a finding. The report must surface confirmed,
+    needs_validation and rejected records only, or the harness is filing checklist
+    observations as vulnerabilities."""
+    src = (VULNESS / "report/render.py").read_text()
+    assert 'f.verdict == "confirmed"' in src
+    assert '"latent"' not in src, "the report must not have a section for latent primitives"
+
+
+def test_chain_stage_sees_latent_primitives() -> None:
+    """The step that turns a leak into code execution is never independently exploitable,
+    so it never becomes a finding. A composer reading only confirmed findings is blind to
+    exactly the half of a chain that makes it a chain."""
+    src = (VULNESS / "agents/roles/chain.py").read_text()
+    assert "'confirmed','latent'" in src or '"confirmed","latent"' in src

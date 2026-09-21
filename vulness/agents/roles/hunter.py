@@ -21,7 +21,13 @@ from vulness.agents.context_budget import ContextBudget, Section, occupancy_frac
 from vulness.agents.roles.context import RoleContext, TaskOutcome
 from vulness.agents.roles.feedback import MARKER as FEEDBACK_MARKER
 from vulness.coverage.cells import companion_for
-from vulness.findings import HunterFinding, candidate_gate, compute_fingerprint, mechanical_check
+from vulness.findings import (
+    HunterFinding,
+    LatentPrimitive,
+    candidate_gate,
+    compute_fingerprint,
+    mechanical_check,
+)
 from vulness.findings.poc import POC_TO_VALIDATION, execute_poc
 from vulness.prompts import preamble, render
 from vulness.sandbox.shim import (
@@ -216,7 +222,12 @@ async def run_hunt(ctx: RoleContext, task: Task) -> TaskOutcome:
         system=preamble(),
         cwd=repo,
         timeout_s=ctx.settings.hunt.timeout_s,
-        schema={"findings": "list", "out_of_scope_leads": "list", "wishlist": "list"},
+        schema={
+            "findings": "list",
+            "latent_primitives": "list",
+            "out_of_scope_leads": "list",
+            "wishlist": "list",
+        },
         allowed_tools=(ctx.settings.hunt.allowed_tools + extra_tools) or None,
     )
     duration = time.monotonic() - started
@@ -280,6 +291,60 @@ async def run_hunt(ctx: RoleContext, task: Task) -> TaskOutcome:
             ctx, task, repo, raw, area, attack_class
         ):
             filed += 1
+
+    # Latent primitives are chain material, not vulnerabilities. Stored with their own
+    # verdict so no report ever presents them as findings, and so the composer can see the
+    # step that is never independently exploitable and therefore never gets filed.
+    latent = 0
+    for raw in payload.get("latent_primitives") or []:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            lp = LatentPrimitive(**raw)
+        except Exception:
+            continue
+        fp = f"lp_{abs(hash((task.repo_id, lp.file, lp.scope, lp.title))) & 0xFFFFFFFFFFFF:012x}"
+        if ctx.db.find_prior_finding(task.repo_id, fp) or ctx.db.find_by_fingerprint(
+            task.run_id, fp
+        ):
+            continue
+        ctx.db.file_finding(
+            Finding(
+                finding_id=new_id("lp"),
+                run_id=task.run_id,
+                repo_id=task.repo_id,
+                task_id=task.task_id,
+                fingerprint=fp,
+                title=lp.title,
+                area=area,
+                attack_class=attack_class,
+                cell_id=task.cell_id,
+                threat_model_json={
+                    "attacker": "whoever defeats the gate below",
+                    "boundary": lp.capability,
+                    "broken_assumption": f"currently gated by: {lp.gated_by}",
+                },
+                trace_json=[
+                    {"kind": "sink", "file": lp.file, "line": lp.line, "scope": lp.scope,
+                     "description": lp.capability}
+                ],
+                evidence_json={"items": [{"file": lp.file, "line": lp.line,
+                                          "description": lp.gated_by}]},
+                remediation_json={"strategy": lp.gate_falls_if},
+                verdict="latent",
+                created_at=now(),
+            )
+        )
+        latent += 1
+    if latent:
+        ctx.db.event(
+            "primitive.recorded",
+            run_id=task.run_id,
+            repo_id=task.repo_id,
+            task_id=task.task_id,
+            count=latent,
+            cell_id=task.cell_id,
+        )
 
     for w in wishes:
         ctx.db.wish(

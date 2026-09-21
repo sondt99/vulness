@@ -43,7 +43,8 @@ def _findings_block(ctx: RoleContext, repo_id: str) -> tuple[str, dict[str, str]
     confirmed = [
         f
         for f in ctx.db.query(
-            "SELECT * FROM findings WHERE repo_id=? AND verdict='confirmed'", (repo_id,)
+            "SELECT * FROM findings WHERE repo_id=? AND verdict IN ('confirmed','latent')",
+            (repo_id,),
         )
     ]
     from vulness.state.models import Finding
@@ -63,6 +64,8 @@ def _findings_block(ctx: RoleContext, repo_id: str) -> tuple[str, dict[str, str]
             json.dumps(
                 {
                     "finding_id": f.finding_id,
+                    "kind": "confirmed vulnerability" if f.verdict == "confirmed"
+                    else "latent primitive (gated, not exploitable alone)",
                     "title": f.title,
                     "severity": f.severity(),
                     "area": f.area,
@@ -182,6 +185,20 @@ async def run_chain(ctx: RoleContext, task: Task) -> TaskOutcome:
         )
         filed += 1
 
+    # Store why pairs did NOT compose, not just how many. A zero-chain result is the
+    # expected answer most of the time, and without the reasoning there is no way to tell
+    # a correct refusal from a stage that silently did nothing.
+    rejected = [p for p in (payload.get("rejected_pairs") or []) if isinstance(p, dict)]
+    for pair in rejected[:12]:
+        ctx.db.event(
+            "chain.pair_rejected",
+            run_id=task.run_id,
+            repo_id=task.repo_id,
+            task_id=task.task_id,
+            steps=[known.get(s, s) for s in (pair.get("steps") or []) if isinstance(s, str)],
+            why_not=str(pair.get("why_not", ""))[:400],
+        )
+
     ctx.db.event(
         "chain.complete",
         run_id=task.run_id,
@@ -189,7 +206,7 @@ async def run_chain(ctx: RoleContext, task: Task) -> TaskOutcome:
         task_id=task.task_id,
         considered=len(known),
         filed=filed,
-        rejected_pairs=len(payload.get("rejected_pairs") or []),
+        rejected_pairs=len(rejected),
     )
     return TaskOutcome(
         status="done",
@@ -198,5 +215,9 @@ async def run_chain(ctx: RoleContext, task: Task) -> TaskOutcome:
         tokens_in=result.tokens_in,
         tokens_out=result.tokens_out,
         cost_usd=result.cost_usd,
-        detail={"chains_filed": filed, "findings_considered": len(known)},
+        detail={
+            "chains_filed": filed,
+            "findings_considered": len(known),
+            "pairs_rejected": len(rejected),
+        },
     )

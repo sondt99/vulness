@@ -351,7 +351,15 @@ def cmd_chains(args: argparse.Namespace) -> int:
     if not items:
         console.print("no chains")
         return 0
-    findings = {f.finding_id: f.title for f in db.findings(rid)}
+    # Per repo, not per run: a chain routinely joins an older primitive to a new finding.
+    findings = {
+        r["finding_id"]: r["title"]
+        for r in db.query(
+            "SELECT finding_id, title FROM findings WHERE repo_id IN"
+            " (SELECT DISTINCT repo_id FROM findings WHERE run_id=?)",
+            (rid,),
+        )
+    }
     for c in items:
         console.print(f"\n[bold]{c['title']}[/]  [red]{c['severity']}[/]")
         console.print(f"  ends in: {c['terminal_impact']}")

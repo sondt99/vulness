@@ -69,6 +69,27 @@ class PoC(BaseModel):
     expected_observation: str = ""
 
 
+class LatentPrimitive(BaseModel):
+    """A dangerous capability that is currently unreachable.
+
+    Not a finding: the gate holds, so no boundary is crossed, and filing it as a
+    vulnerability is the checklist behaviour this audit rejects. It is recorded because the
+    composer needs it. The step that turns an information leak into command execution is by
+    construction never independently exploitable, so it never becomes a finding, and a
+    composer that reads only findings can never see it. Observed exactly once, on a fixture
+    built to contain a chain: the harness found the leak, correctly declined to file the
+    gated `shell=True` beside it, and then had nothing to compose.
+    """
+
+    title: str
+    file: str
+    line: int = Field(ge=1)
+    scope: str = ""
+    capability: str
+    gated_by: str
+    gate_falls_if: str = ""
+
+
 class HunterFinding(BaseModel):
     """What a hunter emits. One root cause, one record."""
 

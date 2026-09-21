@@ -1,6 +1,7 @@
 from vulness.findings.fingerprint import compute_fingerprint
 from vulness.findings.schema import (
     HunterFinding,
+    LatentPrimitive,
     MechanicalReport,
     candidate_gate,
     mechanical_check,
@@ -8,6 +9,7 @@ from vulness.findings.schema import (
 
 __all__ = [
     "HunterFinding",
+    "LatentPrimitive",
     "MechanicalReport",
     "candidate_gate",
     "mechanical_check",

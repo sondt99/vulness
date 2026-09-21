@@ -211,7 +211,17 @@ def render_report(db: Database, run_id: str) -> str:
         out.append("")
 
     if chains := [c for c in db.chains(run_id=run_id) if c["verdict"] != "rejected"]:
-        by_title = {f.finding_id: f.title for f in findings}
+        # Steps are resolved per repo, not per run: a chain routinely joins a primitive
+        # recorded weeks ago to a finding confirmed today, and a run-scoped lookup renders
+        # the older half as "(unknown)".
+        by_title = {
+            r["finding_id"]: r["title"]
+            for r in db.query(
+                "SELECT finding_id, title FROM findings WHERE repo_id IN"
+                " (SELECT DISTINCT repo_id FROM findings WHERE run_id=?)",
+                (run_id,),
+            )
+        }
         out += [
             "## Exploit chains",
             "",
