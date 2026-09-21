@@ -138,6 +138,46 @@ def _merge_payloads(results: list[AgentResult]) -> dict:
 async def run_recon(ctx: RoleContext, task: Task) -> TaskOutcome:
     repo = ctx.repo_path(task.repo_id)
     started = time.monotonic()
+    row = ctx.db.one("SELECT head_sha FROM repos WHERE repo_id=?", (task.repo_id,))
+    head_sha = row["head_sha"] if row else None
+    changed = list((task.seed_json or {}).get("changed_files") or [])
+
+    # Three model passes over a large repository is the second most expensive thing the
+    # harness does, and the answer does not change until the code does. A scoped run still
+    # re-runs it, because the map it needs is of the diff, not of the repository.
+    if not changed and (cached := ctx.db.prior_map(task.repo_id, head_sha)):
+        areas = _areas_from_payload(cached, repo)
+        cells = build_grid(
+            task.run_id,
+            task.repo_id,
+            areas,
+            extra_classes=[
+                str(c.get("name", "")) for c in cached["repo_specific_attack_classes"]
+                if isinstance(c, dict) and c.get("name")
+            ],
+            repo=repo,
+        )
+        for cell in cells:
+            ctx.db.upsert_cell(cell)
+        arch_path = ctx.settings.work_dir / task.run_id / task.repo_id / "architecture.md"
+        arch_path.parent.mkdir(parents=True, exist_ok=True)
+        arch_path.write_text(_render_architecture(cached, task.repo_id))
+        ctx.db.event(
+            "recon.reused",
+            run_id=task.run_id,
+            repo_id=task.repo_id,
+            task_id=task.task_id,
+            head_sha=head_sha,
+            from_run=cached["from_run"],
+            areas=len(areas),
+            cells=len(cells),
+        )
+        return TaskOutcome(
+            status="done",
+            exit_reason="ok",
+            duration_s=time.monotonic() - started,
+            detail={"reused_map_from": cached["from_run"], "areas": len(areas), "cells": len(cells)},
+        )
 
     results = await asyncio.gather(
         *(_recon_pass(ctx, task, repo, focus) for focus in _FOCUS),
@@ -203,6 +243,17 @@ async def run_recon(ctx: RoleContext, task: Task) -> TaskOutcome:
     arch_path = ctx.settings.work_dir / task.run_id / task.repo_id / "architecture.md"
     arch_path.parent.mkdir(parents=True, exist_ok=True)
     arch_path.write_text(_render_architecture(payload, task.repo_id))
+
+    # Bank it against this commit so later runs do not pay for the same map twice.
+    if head_sha and not changed:
+        ctx.db.save_map(
+            task.repo_id,
+            head_sha,
+            task.run_id,
+            architecture=str(payload.get("architecture", "")),
+            areas=payload.get("areas") or [],
+            classes=payload.get("repo_specific_attack_classes") or [],
+        )
 
     ctx.db.event(
         "recon.complete",

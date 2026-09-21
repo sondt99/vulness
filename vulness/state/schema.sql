@@ -161,3 +161,33 @@ CREATE TABLE IF NOT EXISTS events (
     payload_json TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_events_run ON events(run_id, event_id);
+
+-- Cross-run memory. Everything above is keyed by run_id, which makes each run start blind:
+-- recon re-derives a map that has not changed, the same bug is filed again under a new id,
+-- and coverage restarts at zero. These two tables are what let run 20 be better than run 1
+-- instead of merely being run 1 again.
+
+CREATE TABLE IF NOT EXISTS repo_maps (
+    repo_id      TEXT NOT NULL,
+    head_sha     TEXT NOT NULL,
+    run_id       TEXT NOT NULL,          -- the run that paid for it
+    architecture TEXT NOT NULL,
+    areas_json   TEXT NOT NULL DEFAULT '[]',
+    classes_json TEXT NOT NULL DEFAULT '[]',
+    created_at   TEXT NOT NULL,
+    PRIMARY KEY (repo_id, head_sha)
+);
+
+-- Cell coverage accumulated over every run of a repo, so Gapfill can tell "never hunted by
+-- anyone" from "hunted last week and clean". Keyed without run_id on purpose.
+CREATE TABLE IF NOT EXISTS coverage_history (
+    repo_id      TEXT NOT NULL,
+    cell_id      TEXT NOT NULL,
+    head_sha     TEXT,
+    hunts        INTEGER NOT NULL DEFAULT 0,
+    findings     INTEGER NOT NULL DEFAULT 0,
+    last_run_id  TEXT,
+    last_hunted  TEXT,
+    PRIMARY KEY (repo_id, cell_id)
+);
+CREATE INDEX IF NOT EXISTS idx_cov_repo ON coverage_history(repo_id);

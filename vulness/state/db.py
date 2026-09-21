@@ -470,6 +470,89 @@ class Database:
         )
         return Finding.from_row(row) if row else None
 
+    # ---------- cross-run memory ----------
+
+    def save_map(
+        self,
+        repo_id: str,
+        head_sha: str,
+        run_id: str,
+        *,
+        architecture: str,
+        areas: list,
+        classes: list,
+    ) -> None:
+        """Bank a reconnaissance map against the commit it describes."""
+        self.execute(
+            "INSERT INTO repo_maps(repo_id, head_sha, run_id, architecture, areas_json,"
+            " classes_json, created_at) VALUES (?,?,?,?,?,?,?)"
+            " ON CONFLICT(repo_id, head_sha) DO UPDATE SET architecture=excluded.architecture,"
+            " areas_json=excluded.areas_json, classes_json=excluded.classes_json",
+            (repo_id, head_sha, run_id, architecture, _dumps(areas), _dumps(classes), now()),
+        )
+
+    def prior_map(self, repo_id: str, head_sha: str | None) -> dict | None:
+        """A map for this exact commit, if some earlier run already paid for one.
+
+        Keyed by commit, not by repo: a map of code that has since changed is worse than
+        no map, because a hunter trusts it and looks in the wrong place.
+        """
+        if not head_sha:
+            return None
+        row = self.one(
+            "SELECT * FROM repo_maps WHERE repo_id=? AND head_sha=?", (repo_id, head_sha)
+        )
+        if row is None:
+            return None
+        return {
+            "architecture": row["architecture"],
+            "areas": json.loads(row["areas_json"] or "[]"),
+            "repo_specific_attack_classes": json.loads(row["classes_json"] or "[]"),
+            "from_run": row["run_id"],
+            "created_at": row["created_at"],
+        }
+
+    def find_prior_finding(
+        self, repo_id: str, fingerprint: str, *, exclude_run: str | None = None
+    ) -> Finding | None:
+        """The same root cause, filed by any earlier run of this repo.
+
+        This is what the stable fingerprint was always for. Scoped to a single run it only
+        ever caught same-run duplicates, so re-running a repository re-filed everything it
+        had already found, under new ids, with no way to tell old from new.
+        """
+        sql = "SELECT * FROM findings WHERE repo_id=? AND fingerprint=?"
+        params: tuple = (repo_id, fingerprint)
+        if exclude_run:
+            sql += " AND run_id<>?"
+            params += (exclude_run,)
+        row = self.one(sql + " ORDER BY created_at DESC LIMIT 1", params)
+        return Finding.from_row(row) if row else None
+
+    def record_coverage(
+        self, repo_id: str, cell_id: str, *, head_sha: str | None, run_id: str, findings: int
+    ) -> None:
+        self.execute(
+            "INSERT INTO coverage_history(repo_id, cell_id, head_sha, hunts, findings,"
+            " last_run_id, last_hunted) VALUES (?,?,?,1,?,?,?)"
+            " ON CONFLICT(repo_id, cell_id) DO UPDATE SET hunts=coverage_history.hunts+1,"
+            " findings=coverage_history.findings+excluded.findings, head_sha=excluded.head_sha,"
+            " last_run_id=excluded.last_run_id, last_hunted=excluded.last_hunted",
+            (repo_id, cell_id, head_sha, findings, run_id, now()),
+        )
+
+    def prior_coverage(self, repo_id: str) -> dict[str, dict]:
+        """Everything ever hunted in this repo, by cell."""
+        return {
+            r["cell_id"]: {
+                "hunts": r["hunts"],
+                "findings": r["findings"],
+                "head_sha": r["head_sha"],
+                "last_hunted": r["last_hunted"],
+            }
+            for r in self.query("SELECT * FROM coverage_history WHERE repo_id=?", (repo_id,))
+        }
+
     # ---------- validations ----------
 
     def record_validation(self, v: Validation) -> Validation:

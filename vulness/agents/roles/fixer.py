@@ -412,7 +412,7 @@ async def run_fixer(ctx: RoleContext, task: Task) -> TaskOutcome:
         raise KeyError("prompts/fixer.md is missing the {FINDING} or {SOURCE} slot")
 
     budget = ContextBudget(
-        ctx.settings.verify.model, occupancy=ctx.settings.budget.context_occupancy
+        ctx.settings.hunt.model, occupancy=ctx.settings.budget.context_occupancy
     )
     prompt, fit = budget.fit(
         [
@@ -437,11 +437,11 @@ async def run_fixer(ctx: RoleContext, task: Task) -> TaskOutcome:
             detail=fit.summary(),
         )
 
-    result = await ctx.verify_agent.run(
+    result = await ctx.hunt_agent.run(
         prompt,
         system=preamble(),
         cwd=repo,
-        timeout_s=ctx.settings.verify.timeout_s,
+        timeout_s=ctx.settings.hunt.timeout_s,
         schema={
             "invariant": "str",
             "decision_point": "str",
@@ -515,7 +515,7 @@ async def run_fixer(ctx: RoleContext, task: Task) -> TaskOutcome:
         "finding_id": finding.finding_id,
         "title": finding.title,
         "repo_id": task.repo_id,
-        "model": result.model or ctx.settings.verify.model,
+        "model": result.model or ctx.settings.hunt.model,
         "invariant": payload.get("invariant", ""),
         "decision_point": payload.get("decision_point", ""),
         "patch_rationale": payload.get("patch_rationale", ""),
@@ -539,7 +539,7 @@ async def run_fixer(ctx: RoleContext, task: Task) -> TaskOutcome:
             finding_id=finding.finding_id,
             task_id=task.task_id,
             validator="judge",
-            model=ctx.verify_agent.model or ctx.settings.verify.model,
+            model=ctx.hunt_agent.model or ctx.settings.hunt.model,
             # An unverified patch is not a disproof of anything -- it is an open question for
             # the reviewer, which is exactly what needs_validation means.
             verdict="upheld" if flip.verified else "needs_validation",

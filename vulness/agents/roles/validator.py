@@ -32,6 +32,10 @@ _VERDICT_MAP = {
 # Enough context to judge a claim without being able to open the file yourself.
 _SNIPPET_BEFORE = 12
 _SNIPPET_AFTER = 12
+# A validator that is handed more source than it can answer about runs out of tokens
+# mid-sentence and returns nothing, which is strictly worse than being handed less.
+_MAX_SOURCE_CHARS = 14_000
+_MAX_LOCATIONS = 12
 
 
 def _source_block(ctx: RoleContext, finding_id: str, repo: Path) -> str:
@@ -52,8 +56,22 @@ def _source_block(ctx: RoleContext, finding_id: str, repo: Path) -> str:
         if isinstance(item, dict) and item.get("file") and item.get("line"):
             wanted.setdefault(str(item["file"]).lstrip("/"), set()).add(int(item["line"]))
 
+    # Keep the sink's own file first: it is the one location the verdict actually turns on.
+    sink_files = {
+        str(s.get("file", "")).lstrip("/")
+        for s in f.trace_json
+        if isinstance(s, dict) and s.get("kind") == "sink"
+    }
+    ordered = sorted(wanted.items(), key=lambda kv: (kv[0] not in sink_files, kv[0]))[
+        :_MAX_LOCATIONS
+    ]
+
     out: list[str] = []
-    for rel, lines in sorted(wanted.items()):
+    budget = _MAX_SOURCE_CHARS
+    for rel, lines in ordered:
+        if budget <= 0:
+            out.append("_Further cited locations omitted to keep the answer within budget._")
+            break
         path = (repo / rel).resolve()
         try:
             path.relative_to(repo.resolve())
@@ -71,7 +89,11 @@ def _source_block(ctx: RoleContext, finding_id: str, repo: Path) -> str:
                 spans.append((lo, hi))
         for lo, hi in spans:
             body = "\n".join(f"{i:>5} | {text[i - 1]}" for i in range(lo, hi + 1))
-            out.append(f"### {rel} lines {lo}-{hi}\n\n```\n{body}\n```")
+            block = f"### {rel} lines {lo}-{hi}\n\n```\n{body}\n```"
+            budget -= len(block)
+            out.append(block)
+            if budget <= 0:
+                break
     return "\n\n".join(out) or "_No citable source locations._"
 
 

@@ -40,7 +40,10 @@ class VerifyBackend(BaseModel):
     # GLM-5.3 is a reasoning model: reasoning_content consumed 49 of 53 completion tokens
     # on a trivial prompt. Too small a budget returns finish_reason="length" with EMPTY
     # content -- a 200 OK that means failure. Give validation real headroom.
-    max_tokens: int = 16384
+    # Raised after the first real repository run: 8 of 13 validations came back
+    # `subtype=length`, meaning GLM spent the whole budget in reasoning_content and was cut
+    # off before it emitted any JSON. Fixture findings were small enough to hide this.
+    max_tokens: int = 32768
     temperature: float = 0.2
     max_retries: int = 4
 

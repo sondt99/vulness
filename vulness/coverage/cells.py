@@ -175,6 +175,8 @@ def discover_areas(repo: Path, max_areas: int = 12, scope_paths: list[str] | Non
 MIN_CELLS = 6
 MAX_CELLS = 120
 FILES_PER_CELL = 8
+# An area hunted for a single attack class has been glanced at, not swept.
+_MIN_CLASSES_PER_AREA = 3
 
 
 def grid_size_for(total_files: int, *, files_per_cell: int = FILES_PER_CELL) -> int:
@@ -231,9 +233,16 @@ def build_grid(
     extras = [slug(c) for c in (extra_classes or [])]
     if max_cells is None:
         total = count_source_files(repo) if repo is not None else sum(a.files for a in areas)
-        # Never fewer cells than it takes to give every area a real sweep: a grid that
-        # allots one attack class per subsystem is a grid that checked one thing.
-        max_cells = max(grid_size_for(total), min(MAX_CELLS, len(areas) * 3))
+        max_cells = grid_size_for(total)
+
+    # When recon proposes more areas than the grid can sweep properly, the answer is fewer
+    # areas, not more cells. Inflating the grid to fit every area gave a 3 file fixture 30
+    # cells; truncating the grid instead gave a 707 file repository one attack class per
+    # subsystem. Both are the same mistake: letting area count drive cell count.
+    # Keep the highest-priority areas and give each of them a real sweep.
+    max_areas = max(1, max_cells // _MIN_CLASSES_PER_AREA)
+    if len(areas) > max_areas:
+        areas = sorted(areas, key=lambda a: -a.files)[:max_areas]
 
     for area in areas:
         classes = area.biased_classes()
@@ -276,17 +285,39 @@ def companion_for(attack_class: str, skill_dir: Path | None) -> str | None:
     return path.read_text() if path.is_file() else None
 
 
-def thin_cells(cells: list[Cell], *, min_hunts: int = 1) -> list[Cell]:
-    """Cells Gapfill should revisit.
+def thin_cells(
+    cells: list[Cell],
+    *,
+    min_hunts: int = 1,
+    prior: dict[str, dict] | None = None,
+) -> list[Cell]:
+    """Cells Gapfill should revisit, ordered by how little is known about them.
 
     'Thin' is not 'found nothing'. A cell hunted once that produced nothing may genuinely
-    be clean -- or the hunter may have died early. A cell never hunted at all is the
+    be clean, or the hunter may have died early. A cell never hunted at all is the
     unambiguous gap, so those come first.
+
+    `prior` is coverage accumulated across every previous run of this repository. Without
+    it each run rediscovers the same gaps in the same order and the twentieth run explores
+    exactly what the first one did. With it, a cell nobody has ever hunted outranks one
+    that was swept last week, which is the whole point of running repeatedly.
     """
-    never = [c for c in cells if c.hunter_tasks == 0 and c.status in ("planned", "assigned")]
+    prior = prior or {}
+
+    def never_hunted_ever(c: Cell) -> bool:
+        return c.hunter_tasks == 0 and prior.get(c.cell_id, {}).get("hunts", 0) == 0
+
+    virgin = [c for c in cells if never_hunted_ever(c) and c.status in ("planned", "assigned")]
+    never_this_run = [
+        c
+        for c in cells
+        if c.hunter_tasks == 0 and c.status in ("planned", "assigned") and not never_hunted_ever(c)
+    ]
     barren = [
         c
         for c in cells
         if 0 < c.hunter_tasks <= min_hunts and c.findings_count == 0 and c.status != "covered"
     ]
-    return never + barren
+    # Least-explored first, and within "seen before" prefer the ones seen least often.
+    never_this_run.sort(key=lambda c: prior.get(c.cell_id, {}).get("hunts", 0))
+    return virgin + never_this_run + barren

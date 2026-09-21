@@ -260,6 +260,14 @@ async def run_hunt(ctx: RoleContext, task: Task) -> TaskOutcome:
             findings=filed,
             status="covered" if filed else "thin",
         )
+        row = ctx.db.one("SELECT head_sha FROM repos WHERE repo_id=?", (task.repo_id,))
+        ctx.db.record_coverage(
+            task.repo_id,
+            task.cell_id,
+            head_sha=row["head_sha"] if row else None,
+            run_id=task.run_id,
+            findings=filed,
+        )
 
     # Shallow detection: zero findings AND zero leads AND suspiciously fast is the signature
     # of a crashed dependency, not a clean cell. Requeue rather than bank a false all-clear.
@@ -350,6 +358,26 @@ async def _process_candidate(
         return False
 
     fingerprint = compute_fingerprint(hf, task.repo_id)
+
+    # Did an earlier run of this repository already file this exact root cause? The stable
+    # fingerprint existed for this from the start, but the lookup was scoped to one run, so
+    # re-running a repository re-filed everything it had already found under fresh ids.
+    if prior := ctx.db.find_prior_finding(task.repo_id, fingerprint, exclude_run=task.run_id):
+        ctx.db.event(
+            "finding.known",
+            run_id=task.run_id,
+            repo_id=task.repo_id,
+            task_id=task.task_id,
+            fingerprint=fingerprint,
+            first_seen_run=prior.run_id,
+            prior_verdict=prior.verdict,
+            title=hf.title[:120],
+        )
+        # A prior rejection stands until the code changes. Re-hunting the same disproved
+        # claim every run is how a harness spends its budget arguing with itself.
+        if prior.verdict == "rejected":
+            return False
+
     existing = ctx.db.find_by_fingerprint(task.run_id, fingerprint)
     if existing is None:
         # Same defect seen through a different attack class lands on the same sink line.
