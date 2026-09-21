@@ -192,6 +192,26 @@ def grid_size_for(total_files: int, *, files_per_cell: int = FILES_PER_CELL) -> 
     return max(MIN_CELLS, min(MAX_CELLS, MIN_CELLS + total_files // files_per_cell))
 
 
+def count_source_files(repo: Path) -> int:
+    """Source files in the repository, for sizing the grid.
+
+    Must come from the tree, not from the areas. Recon names a couple of representative
+    paths per area, so summing those counted 200-odd files in a 707 file repository and
+    sized the grid at 29 cells instead of 94. The visible symptom was subtle: every area
+    still appeared, so coverage looked complete, while 27 of 28 areas had been given
+    exactly one attack class to hunt.
+    """
+    n = 0
+    for f in repo.rglob("*"):
+        if (
+            f.is_file()
+            and f.suffix.lower() in _LANG_BIAS
+            and not any(part in _SKIP_DIRS for part in f.parts)
+        ):
+            n += 1
+    return n
+
+
 def build_grid(
     run_id: str,
     repo_id: str,
@@ -199,6 +219,7 @@ def build_grid(
     *,
     extra_classes: list[str] | None = None,
     max_cells: int | None = None,
+    repo: Path | None = None,
 ) -> list[Cell]:
     """Cross areas with the attack classes their languages make plausible.
 
@@ -209,7 +230,10 @@ def build_grid(
     cells: list[Cell] = []
     extras = [slug(c) for c in (extra_classes or [])]
     if max_cells is None:
-        max_cells = grid_size_for(sum(a.files for a in areas))
+        total = count_source_files(repo) if repo is not None else sum(a.files for a in areas)
+        # Never fewer cells than it takes to give every area a real sweep: a grid that
+        # allots one attack class per subsystem is a grid that checked one thing.
+        max_cells = max(grid_size_for(total), min(MAX_CELLS, len(areas) * 3))
 
     for area in areas:
         classes = area.biased_classes()

@@ -193,7 +193,9 @@ async def run_recon(ctx: RoleContext, task: Task) -> TaskOutcome:
         if isinstance(c, dict) and c.get("name")
     ]
 
-    cells = build_grid(task.run_id, task.repo_id, areas, extra_classes=extra_classes)
+    cells = build_grid(
+        task.run_id, task.repo_id, areas, extra_classes=extra_classes, repo=repo
+    )
     for cell in cells:
         ctx.db.upsert_cell(cell)
 

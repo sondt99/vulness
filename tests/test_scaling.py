@@ -39,10 +39,21 @@ def test_grid_is_bounded_at_both_ends() -> None:
     assert grid_size_for(10_000_000) == MAX_CELLS
 
 
-def test_build_grid_respects_the_derived_size() -> None:
+def test_build_grid_gives_every_area_more_than_one_attack_class() -> None:
+    """Regression from the first real repository run.
+
+    The grid was sized from the file count recon attributed to its areas, and recon names
+    a couple of representative paths per area, so a 707 file repository produced a 29 cell
+    grid. Every area still appeared, which made coverage look complete, while 27 of 28
+    areas had been given exactly one attack class to hunt.
+    """
+    from collections import Counter
+
     areas = [Area(name=f"a{i}", paths=[f"a{i}"], files=2, langs={".py": 2}) for i in range(6)]
     cells = build_grid("r", "repo", areas)
-    assert len(cells) <= grid_size_for(sum(a.files for a in areas))
+    per_area = Counter(c.area for c in cells)
+    assert min(per_area.values()) >= 2, f"areas hunted for one class only: {per_area}"
+    assert len(cells) <= MAX_CELLS
 
 
 def test_fork_share_cap_matches_the_published_range() -> None:
