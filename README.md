@@ -72,6 +72,43 @@ recon ──▶ hunt ──▶ validate ──▶ report
 4. **Validate** hands the finding to GLM with one instruction: *disprove this*.
 5. **Report** is pure rendering. No model, so the prose and the data cannot disagree.
 
+## Testing
+
+Three levels, cheapest first.
+
+**1. Suite and static gates.** No models, no network, no cost. Run these before every push.
+
+```bash
+pytest -q                     # 39 tests, under a second
+ruff check sness/ tests/
+pyright sness/
+```
+
+What they actually guard: that only the hunt role can file findings, that every declared
+stage has a handler, that the context budget converges, and a regression for each bug a
+live run has exposed.
+
+**2. Environment self-test.** Touches both models and starts a container. Effectively free.
+
+```bash
+sness doctor
+```
+
+Four checks, and it refuses to dispatch execution tasks if the sandbox fails, because a
+sandbox that silently does not start turns the harness into a very expensive grep.
+
+**3. Calibration against known ground truth.** Costs tokens. This is the only test that
+measures whether the harness is any good.
+
+```bash
+sness run tests/fixtures/vulnshop -b 42 --gapfill 1
+sness findings -v confirmed
+```
+
+`tests/fixtures/vulnshop/README.md` lists the planted defects, including one decoy that
+must NOT be reported. A healthy run finds three real bugs and stays silent about the
+decoy. If it reports the decoy, that is a false positive worth an issue.
+
 ## Calibration
 
 Measured against a target with known ground truth (2 planted bugs + 1 crypto decoy):
