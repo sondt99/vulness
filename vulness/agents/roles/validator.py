@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 
 from vulness.agents.context_budget import ContextBudget, Section
 from vulness.agents.roles.context import RoleContext, TaskOutcome
@@ -26,6 +27,52 @@ _VERDICT_MAP = {
     "disproved": "rejected",
     "needs_validation": "needs_validation",
 }
+
+
+# Enough context to judge a claim without being able to open the file yourself.
+_SNIPPET_BEFORE = 12
+_SNIPPET_AFTER = 12
+
+
+def _source_block(ctx: RoleContext, finding_id: str, repo: Path) -> str:
+    """Embed the cited source, because the validator cannot go and read it.
+
+    The hunt runs on a CLI agent with a filesystem. Validation runs on an API model with
+    none. Asking it to "read the cited code" produced exactly what you would expect once
+    findings got large enough to need it: the model emitted a tool call it has no runtime
+    for and stopped mid-sentence, and every validation of that finding failed as
+    schema_invalid. Observed on real code, not in theory. So the harness does the reading.
+    """
+    f = ctx.db.get_finding(finding_id)
+    if f is None:
+        return "(finding missing)"
+
+    wanted: dict[str, set[int]] = {}
+    for item in list(f.trace_json) + list((f.evidence_json or {}).get("items") or []):
+        if isinstance(item, dict) and item.get("file") and item.get("line"):
+            wanted.setdefault(str(item["file"]).lstrip("/"), set()).add(int(item["line"]))
+
+    out: list[str] = []
+    for rel, lines in sorted(wanted.items()):
+        path = (repo / rel).resolve()
+        try:
+            path.relative_to(repo.resolve())
+            text = path.read_text(errors="replace").splitlines()
+        except (OSError, ValueError):
+            out.append(f"### {rel}\n\n_could not be read; treat any claim about it as unproven._")
+            continue
+        # Merge overlapping windows so one function does not appear three times.
+        spans: list[tuple[int, int]] = []
+        for ln in sorted(lines):
+            lo, hi = max(1, ln - _SNIPPET_BEFORE), min(len(text), ln + _SNIPPET_AFTER)
+            if spans and lo <= spans[-1][1] + 1:
+                spans[-1] = (spans[-1][0], max(spans[-1][1], hi))
+            else:
+                spans.append((lo, hi))
+        for lo, hi in spans:
+            body = "\n".join(f"{i:>5} | {text[i - 1]}" for i in range(lo, hi + 1))
+            out.append(f"### {rel} lines {lo}-{hi}\n\n```\n{body}\n```")
+    return "\n\n".join(out) or "_No citable source locations._"
 
 
 def _finding_block(ctx: RoleContext, finding_id: str) -> str:
@@ -88,13 +135,22 @@ async def run_validate(ctx: RoleContext, task: Task) -> TaskOutcome:
         mechanical_block=_mechanical_block(ctx, task.finding_id),
     )
     head, _, tail = instruction.partition("{FINDING}")
+    source = _source_block(ctx, task.finding_id, repo)
     prompt, fit = budget.fit(
         [
             Section("head", head, priority=0),
-            Section("finding", _finding_block(ctx, task.finding_id), priority=1, floor_chars=2000),
+            Section("finding", _finding_block(ctx, task.finding_id), priority=2, floor_chars=1500),
+            # The source outranks the claim: a validator with the claim but not the code
+            # can only agree with it.
+            Section(
+                "source",
+                "## The cited source\n\n" + source,
+                priority=1,
+                floor_chars=2000,
+            ),
             Section("tail", tail, priority=0),
         ],
-        separator="",
+        separator="\n\n",
     )
     if fit.trimmed or fit.dropped:
         ctx.db.event(

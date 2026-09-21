@@ -20,12 +20,20 @@ Repository: `{repo_name}` at `{repo_path}`
 
 ## How to disprove it
 
-Read the cited code. Then attack the claim in this order - the first one that lands ends it:
+You have no filesystem and no tools. Every line you are allowed to rely on is quoted for
+you under "The cited source" below, with real line numbers. Do not announce a file read,
+do not emit a tool call, and do not ask for more: work from what is in front of you, and
+if the quoted context is genuinely insufficient to decide, say so in `reason` and return
+`needs_validation`.
 
-1. **Does the cited code say what the hunter says it says?** Line numbers were verified to
-   exist; nothing verified that they mean anything.
+Attack the claim in this order - the first one that lands ends it:
+
+1. **Does the quoted code say what the hunter says it says?** Line numbers were verified to
+   exist; nothing verified that they mean anything. This is the check you are best placed
+   to make, because you can see the code and the claim side by side.
 2. **Is there a control the hunter missed?** Validation upstream, middleware, a type
-   constraint, a caller that already sanitises. Look at every caller, not just the one quoted.
+   constraint, a caller that already sanitises. If deciding this needs code that was not
+   quoted, that is `needs_validation` with the exact missing location, not a guess.
 3. **Is the attacker real?** Can the named principal actually reach this entrypoint, with
    the access the hunter assumes? Or does reaching it already require the authority the bug
    supposedly grants?
