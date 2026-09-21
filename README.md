@@ -119,6 +119,23 @@ Measured against a target with known ground truth (2 planted bugs + 1 crypto dec
 - Two defects this surfaced in vulness itself - attack class splitting one bug into three
   identities, and `schema_invalid` being treated as fatal - are now regression tests.
 
+## Measured behaviour
+
+Two-repo fleet run against the calibration fixtures, after the scaling work:
+
+| | Cloudflare | vulness |
+|---|---|---|
+| Repos | 128 | 2 |
+| Workers | 50-200 | 6 |
+| Coverage | grid driven to a clean pass | 11/14 cells (79%) |
+| Sibling-fork rate | ~9%, up to ~20% by model | 19% |
+| Peak agent context | under 25% of window | 28% |
+| Stages exercised live | all | recon, hunt, validate, judge, trace, dedup |
+
+Grid size scales with the target: 3 files gives 6 cells, ~600 files gives 81. A flat cap
+previously gave a 102 line fixture the same 80 cell grid as a large service, and 6 of
+those cells were ever reached.
+
 ## Status
 
 Working: recon, hunt, validate, coverage grid, gapfill, sibling forking, shallow-run
