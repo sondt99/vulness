@@ -489,6 +489,49 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_bench(args: argparse.Namespace) -> int:
+    """Score a run against labelled targets. Deterministic: no model runs.
+
+    Exit status is the point of the `--min-recall` and `--max-decoys` gates: a benchmark
+    nothing can fail is a dashboard. CI can hold a floor without anyone reading the table.
+    """
+    settings, db = _load(args.config)
+    rid = args.run or (db.latest_run() or {})["run_id"]
+    from vulness.bench import load_corpora, render_scorecard, score_run
+
+    corpus_dir = Path(args.corpus)
+    if not corpus_dir.is_dir():
+        console.print(f"[red]no corpus directory at {corpus_dir}[/red]")
+        return 2
+    corpora = load_corpora(corpus_dir)
+    if not corpora:
+        console.print(f"[red]no *.json corpora in {corpus_dir}[/red]")
+        return 2
+
+    scores = score_run(db, rid, corpora)
+    text = render_scorecard(scores)
+    if args.out:
+        Path(args.out).write_text(text)
+        console.print(f"wrote {args.out}")
+    else:
+        print(text)
+
+    if not scores:
+        return 0
+    tier = args.tier
+    recalls = [r for r in (s.tiers[tier].recall for s in scores) if r is not None]
+    recall = sum(recalls) / len(recalls) if recalls else 0.0
+    decoys = sum(len(s.tiers[tier].decoys) for s in scores)
+    failed = []
+    if args.min_recall is not None and recall < args.min_recall:
+        failed.append(f"recall {recall:.0%} at tier {tier} is below the {args.min_recall:.0%} floor")
+    if args.max_decoys is not None and decoys > args.max_decoys:
+        failed.append(f"{decoys} decoy(s) flagged at tier {tier}, limit {args.max_decoys}")
+    for line in failed:
+        console.print(f"[red]{line}[/red]")
+    return 1 if failed else 0
+
+
 def _git(repo: Path, *args: str) -> str | None:
     import subprocess
 
@@ -572,6 +615,20 @@ def build_parser() -> argparse.ArgumentParser:
     wish_action("dismiss", "close it without granting it; enqueues nothing").set_defaults(
         fn=cmd_wishlist_dismiss
     )
+
+    b = common(sub.add_parser("bench", help="score a run against labelled targets"))
+    b.add_argument("--run", help="run id (default: most recent)")
+    b.add_argument("--corpus", default="tests/ground_truth", help="directory of corpus JSON")
+    b.add_argument("-o", "--out", help="write the scorecard to a file")
+    b.add_argument(
+        "--tier",
+        default="reported",
+        choices=("confirmed", "reported", "raw"),
+        help="which verdict tier the gates below apply to",
+    )
+    b.add_argument("--min-recall", type=float, help="fail below this recall, 0.0 to 1.0")
+    b.add_argument("--max-decoys", type=int, help="fail above this many decoys flagged")
+    b.set_defaults(fn=cmd_bench)
 
     rp = common(sub.add_parser("report", help="render REPORT.md"))
     rp.add_argument("--run", help="run_id (default: latest)")
