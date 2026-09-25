@@ -96,9 +96,24 @@ def _norm(path: str) -> str:
 
 
 def load_corpora(directory: Path) -> dict[str, Corpus]:
-    """Every corpus in a directory, keyed by repo id."""
+    """Every corpus in a directory, keyed by repo id.
+
+    A file may hold one corpus or a list of them. The hand-written fixture corpora are one
+    file each because they are read and edited by people; an imported benchmark is a bundle,
+    because SecBench.js alone is several hundred targets and that many files is a directory
+    nobody can look at.
+    """
     out: dict[str, Corpus] = {}
     for path in sorted(directory.glob("*.json")):
-        corpus = Corpus(**json.loads(path.read_text()))
-        out[corpus.repo] = corpus
+        data = json.loads(path.read_text())
+        for item in data if isinstance(data, list) else [data]:
+            corpus = Corpus(**item)
+            out[corpus.repo] = corpus
     return out
+
+
+def dump_corpora(corpora: list[Corpus], out: Path) -> int:
+    """Write a bundle. Sorted and indented so a regenerated corpus diffs line by line."""
+    payload = [c.model_dump(exclude_none=False) for c in sorted(corpora, key=lambda c: c.repo)]
+    out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    return len(payload)

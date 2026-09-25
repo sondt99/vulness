@@ -532,6 +532,46 @@ def cmd_bench(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def cmd_corpus_secbench(args: argparse.Namespace) -> int:
+    """Build a corpus bundle from SecBench.js sink_locations_*.txt files."""
+    from vulness.bench import dump_corpora, from_secbench_js
+
+    src = Path(args.sinks)
+    files = {p.stem.removeprefix("sink_locations_"): p for p in sorted(src.glob("*.txt"))}
+    if not files:
+        console.print(f"[red]no sink_locations_*.txt under {src}[/red]")
+        return 2
+    corpora = from_secbench_js(files)
+    n = dump_corpora(corpora, Path(args.out))
+    labels = sum(len(c.labels) for c in corpora)
+    console.print(f"wrote {args.out}: {n} target(s), {labels} label(s)")
+    return 0
+
+
+def cmd_corpus_vul4j(args: argparse.Namespace) -> int:
+    """Build a corpus bundle from the Vul4J dataset CSV plus its fix-commit patches."""
+    from vulness.bench import dump_corpora, from_vul4j
+
+    csv_path, patches = Path(args.csv), Path(args.patches)
+    if not csv_path.exists():
+        console.print(f"[red]no dataset csv at {csv_path}[/red]")
+        return 2
+    if not patches.is_dir():
+        console.print(
+            f"[red]no patch directory at {patches}. Fetch <commit>.patch for each"
+            " human_patch url into <vul_id>.patch first.[/red]"
+        )
+        return 2
+    corpora = from_vul4j(csv_path, patches)
+    if not corpora:
+        console.print("[red]no entry had a patch on disk; nothing to write[/red]")
+        return 2
+    n = dump_corpora(corpora, Path(args.out))
+    labels = sum(len(c.labels) for c in corpora)
+    console.print(f"wrote {args.out}: {n} target(s), {labels} label(s)")
+    return 0
+
+
 def _git(repo: Path, *args: str) -> str | None:
     import subprocess
 
@@ -629,6 +669,18 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--min-recall", type=float, help="fail below this recall, 0.0 to 1.0")
     b.add_argument("--max-decoys", type=int, help="fail above this many decoys flagged")
     b.set_defaults(fn=cmd_bench)
+
+    cp = sub.add_parser("corpus", help="build a scoring corpus from a published benchmark")
+    cp_sub = cp.add_subparsers(dest="corpus_command", required=True)
+    sb = cp_sub.add_parser("secbench", help="SecBench.js sink locations")
+    sb.add_argument("--sinks", required=True, help="directory of sink_locations_*.txt")
+    sb.add_argument("-o", "--out", required=True, help="corpus bundle to write")
+    sb.set_defaults(fn=cmd_corpus_secbench)
+    vj = cp_sub.add_parser("vul4j", help="Vul4J dataset csv plus fix-commit patches")
+    vj.add_argument("--csv", required=True, help="vul4j_dataset.csv")
+    vj.add_argument("--patches", required=True, help="directory of <vul_id>.patch")
+    vj.add_argument("-o", "--out", required=True, help="corpus bundle to write")
+    vj.set_defaults(fn=cmd_corpus_vul4j)
 
     rp = common(sub.add_parser("report", help="render REPORT.md"))
     rp.add_argument("--run", help="run_id (default: latest)")
