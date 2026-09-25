@@ -46,6 +46,12 @@ fake one. If the decisive fact is genuinely outside this repository (deployment 
 proxy behaviour, identity policy), the verdict is `needs_validation`, not `upheld`: name the
 exact missing fact.
 
+One rule about the pre-check above. If it reports a sandboxed PoC as **refuted**, the claim
+was executed against untouched source and did not reproduce. `upheld` is then not available
+to you: the harness caps it at `needs_validation` regardless of what you answer. Say what
+the PoC failed to show and what would settle it, rather than arguing the source back into a
+confirmation.
+
 ## Output
 
 End your reply with exactly one fenced ```json block:

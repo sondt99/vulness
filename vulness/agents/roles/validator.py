@@ -117,6 +117,38 @@ def _finding_block(ctx: RoleContext, finding_id: str) -> str:
     )[:14000]
 
 
+def _poc_verdict(ctx: RoleContext, finding_id: str) -> str | None:
+    """What the sandbox concluded about this finding's PoC, or None if it never ran."""
+    seen: str | None = None
+    for v in ctx.db.validations_for(finding_id):
+        if v.validator == "sandbox":
+            seen = str((v.detail_json or {}).get("verdict") or "") or None
+    return seen
+
+
+def _evidence_ceiling(verdict: str, poc_verdict: str | None) -> tuple[str, str | None]:
+    """Cap a verdict at what the dynamic evidence supports.
+
+    A PoC that ran against read-only source and did not reproduce is the only ground truth
+    in the chain. Every other layer is reading. Left alone, the layer with the least context
+    outvoted the one with the most: every finding on this box recorded
+    `sandbox:needs_validation, adversarial:upheld` and was promoted to confirmed on source
+    reasoning alone, with all ten PoCs refuted.
+
+    This does not let the PoC reject a finding. A PoC can fail for reasons that have nothing
+    to do with the bug, which is why `refuted` still maps to `needs_validation` rather than
+    `disproved` in POC_TO_VALIDATION. It only stops a failed execution from being read as a
+    success: `needs_validation` is the honest word for a claim whose one attempt to
+    demonstrate itself did not.
+    """
+    if verdict == "upheld" and poc_verdict == "refuted":
+        return "needs_validation", (
+            "capped at needs_validation: the sandboxed PoC ran against untouched source and"
+            " did not reproduce, so the claim is not demonstrated whatever the source reads like"
+        )
+    return verdict, None
+
+
 def _mechanical_block(ctx: RoleContext, finding_id: str) -> str:
     """Everything already established before a model was asked to judge.
 
@@ -229,6 +261,20 @@ async def run_validate(ctx: RoleContext, task: Task) -> TaskOutcome:
         )
         return TaskOutcome(status="failed", exit_reason="schema_invalid", duration_s=duration)
 
+    verdict, capped = _evidence_ceiling(raw_verdict, _poc_verdict(ctx, task.finding_id))
+    if capped:
+        reason = f"{reason}\n\n[harness] {capped}"
+        ctx.db.event(
+            "validate.capped",
+            run_id=task.run_id,
+            repo_id=task.repo_id,
+            task_id=task.task_id,
+            level="warn",
+            finding_id=task.finding_id,
+            model_verdict=raw_verdict,
+            recorded=verdict,
+        )
+
     ctx.db.record_validation(
         Validation(
             validation_id=new_id("v"),
@@ -236,16 +282,18 @@ async def run_validate(ctx: RoleContext, task: Task) -> TaskOutcome:
             task_id=task.task_id,
             validator="adversarial",
             model=ctx.verify_agent.model or ctx.settings.verify.model,
-            verdict=raw_verdict,  # type: ignore[arg-type]
+            verdict=verdict,  # type: ignore[arg-type]
             reason=reason,
             detail_json={
                 "checks": payload.get("checks", []),
                 "corrected_severity": payload.get("corrected_severity"),
                 "missing_fact": payload.get("missing_fact"),
+                "model_verdict": raw_verdict,
+                "capped": capped,
             },
         )
     )
-    ctx.db.set_verdict(task.finding_id, _VERDICT_MAP[raw_verdict])
+    ctx.db.set_verdict(task.finding_id, _VERDICT_MAP[verdict])
 
     return TaskOutcome(
         status="done",
@@ -254,5 +302,5 @@ async def run_validate(ctx: RoleContext, task: Task) -> TaskOutcome:
         tokens_in=result.tokens_in,
         tokens_out=result.tokens_out,
         cost_usd=result.cost_usd,
-        detail={"verdict": raw_verdict, "reason": reason[:400]},
+        detail={"verdict": verdict, "reason": reason[:400]},
     )
