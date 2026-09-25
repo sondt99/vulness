@@ -13,8 +13,10 @@ Two independent mechanisms keep this honest:
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
+from typing import Any
 
 from vulness.agents.context_budget import ContextBudget, Section
 from vulness.agents.roles.context import RoleContext, TaskOutcome
@@ -66,8 +68,17 @@ def _source_block(ctx: RoleContext, finding_id: str, repo: Path) -> str:
         :_MAX_LOCATIONS
     ]
 
+    return _quote(repo, ordered, char_budget=_MAX_SOURCE_CHARS) or "_No citable source locations._"
+
+
+def _quote(repo: Path, ordered: list[tuple[str, set[int]]], *, char_budget: int) -> str:
+    """Read the named windows out of the repository, with containment re-checked here.
+
+    Every path reaching this function came from a model, whether as a trace step or as a
+    re-ask, so the relative_to() check is the control rather than a sanity assertion.
+    """
     out: list[str] = []
-    budget = _MAX_SOURCE_CHARS
+    budget = char_budget
     for rel, lines in ordered:
         if budget <= 0:
             out.append("_Further cited locations omitted to keep the answer within budget._")
@@ -94,7 +105,7 @@ def _source_block(ctx: RoleContext, finding_id: str, repo: Path) -> str:
             out.append(block)
             if budget <= 0:
                 break
-    return "\n\n".join(out) or "_No citable source locations._"
+    return "\n\n".join(out)
 
 
 def _finding_block(ctx: RoleContext, finding_id: str) -> str:
@@ -115,6 +126,37 @@ def _finding_block(ctx: RoleContext, finding_id: str) -> str:
         },
         indent=2,
     )[:14000]
+
+
+# One re-ask, never a loop. The gap being closed is "the code it needed was not quoted",
+# and a model that still cannot decide with the locations it chose itself is telling you
+# the answer is not in this repository.
+_MAX_REASK_LOCATIONS = 6
+_MAX_REASK_CHARS = 8_000
+# `path/to/file.py:120`, in prose or in a field. The prompt has always asked for the exact
+# missing location; this reads it back whether or not the model used the structured field.
+_LOCATION_RE = re.compile(r"([A-Za-z0-9_./\-]+\.[A-Za-z0-9_]{1,8}):(\d{1,6})")
+
+
+def _requested_locations(payload: dict) -> list[tuple[str, set[int]]]:
+    """What the validator said it still needs, structured or parsed out of its prose."""
+    wanted: dict[str, set[int]] = {}
+
+    def add(file: str, line: int) -> None:
+        rel = str(file).strip().lstrip("/")
+        if rel and 0 < line < 1_000_000:
+            wanted.setdefault(rel, set()).add(line)
+
+    for item in payload.get("missing_locations") or []:
+        if isinstance(item, dict) and item.get("file"):
+            try:
+                add(str(item["file"]), int(item.get("line") or 1))
+            except (TypeError, ValueError):
+                continue
+    for field in ("missing_fact", "reason"):
+        for file, line in _LOCATION_RE.findall(str(payload.get(field) or "")):
+            add(file, int(line))
+    return sorted(wanted.items())[:_MAX_REASK_LOCATIONS]
 
 
 def _poc_verdict(ctx: RoleContext, finding_id: str) -> str | None:
@@ -172,6 +214,8 @@ def _mechanical_block(ctx: RoleContext, finding_id: str) -> str:
 async def run_validate(ctx: RoleContext, task: Task) -> TaskOutcome:
     if not task.finding_id:
         return TaskOutcome(status="failed", exit_reason="schema_invalid")
+    # Bound once: the closures below lose the narrowing that the guard establishes here.
+    finding_id = task.finding_id
 
     repo = ctx.repo_path(task.repo_id)
     started = time.monotonic()
@@ -186,45 +230,39 @@ async def run_validate(ctx: RoleContext, task: Task) -> TaskOutcome:
         repo_name=task.repo_id,
         repo_path=str(repo),
         finding_block="{FINDING}",
-        mechanical_block=_mechanical_block(ctx, task.finding_id),
+        mechanical_block=_mechanical_block(ctx, finding_id),
     )
     head, _, tail = instruction.partition("{FINDING}")
-    source = _source_block(ctx, task.finding_id, repo)
-    prompt, fit = budget.fit(
-        [
+    source = _source_block(ctx, finding_id, repo)
+
+    def compose(extra: str = "") -> tuple[str, Any]:
+        sections = [
             Section("head", head, priority=0),
-            Section("finding", _finding_block(ctx, task.finding_id), priority=2, floor_chars=1500),
+            Section("finding", _finding_block(ctx, finding_id), priority=2, floor_chars=1500),
             # The source outranks the claim: a validator with the claim but not the code
             # can only agree with it.
-            Section(
-                "source",
-                "## The cited source\n\n" + source,
-                priority=1,
-                floor_chars=2000,
-            ),
+            Section("source", "## The cited source\n\n" + source, priority=1, floor_chars=2000),
             Section("tail", tail, priority=0),
-        ],
-        separator="\n\n",
-    )
-    if fit.trimmed or fit.dropped:
-        ctx.db.event(
-            "context.trimmed",
-            run_id=task.run_id,
-            task_id=task.task_id,
-            finding_id=task.finding_id,
-            detail=fit.summary(),
+        ]
+        if extra:
+            # Above everything: this is the code the model itself said the verdict turns on.
+            sections.insert(3, Section("requested", extra, priority=0, floor_chars=1000))
+        return budget.fit(sections, separator="\n\n")
+
+    async def ask(prompt: str) -> Any:
+        return await ctx.verify_agent.run(
+            prompt,
+            system=preamble(),
+            cwd=repo,
+            timeout_s=ctx.settings.verify.timeout_s,
+            schema={
+                "verdict": "upheld|disproved|needs_validation",
+                "reason": "str",
+                "missing_locations": "list",
+            },
         )
 
-    result = await ctx.verify_agent.run(
-        prompt,
-        system=preamble(),
-        cwd=repo,
-        timeout_s=ctx.settings.verify.timeout_s,
-        schema={"verdict": "upheld|disproved|needs_validation", "reason": "str"},
-    )
-    duration = time.monotonic() - started
-
-    if not result.ok:
+    def fail(result: Any, duration: float) -> TaskOutcome:
         # A validator that failed to run has NOT cleared anything. The finding stays a
         # candidate and the task is retried -- never silently promoted.
         ctx.db.event(
@@ -233,7 +271,7 @@ async def run_validate(ctx: RoleContext, task: Task) -> TaskOutcome:
             repo_id=task.repo_id,
             task_id=task.task_id,
             level="error",
-            finding_id=task.finding_id,
+            finding_id=finding_id,
             classification=result.classification,
             error=result.error,
         )
@@ -246,22 +284,86 @@ async def run_validate(ctx: RoleContext, task: Task) -> TaskOutcome:
             cost_usd=result.cost_usd,
         )
 
-    payload = result.extract_json() or {}
-    raw_verdict = str(payload.get("verdict", "")).strip().lower()
-    reason = str(payload.get("reason", "")).strip() or "(no reason given)"
+    def parse(result: Any) -> tuple[dict, str, str] | None:
+        payload = result.extract_json() or {}
+        raw = str(payload.get("verdict", "")).strip().lower()
+        reason = str(payload.get("reason", "")).strip() or "(no reason given)"
+        if raw not in _VERDICT_MAP:
+            ctx.db.event(
+                "validate.unparseable",
+                run_id=task.run_id,
+                task_id=task.task_id,
+                level="warn",
+                finding_id=finding_id,
+                got=raw[:80],
+            )
+            return None
+        return payload, raw, reason
 
-    if raw_verdict not in _VERDICT_MAP:
+    prompt, fit = compose()
+    if fit.trimmed or fit.dropped:
         ctx.db.event(
-            "validate.unparseable",
+            "context.trimmed",
             run_id=task.run_id,
             task_id=task.task_id,
-            level="warn",
-            finding_id=task.finding_id,
-            got=raw_verdict[:80],
+            finding_id=finding_id,
+            detail=fit.summary(),
         )
-        return TaskOutcome(status="failed", exit_reason="schema_invalid", duration_s=duration)
 
-    verdict, capped = _evidence_ceiling(raw_verdict, _poc_verdict(ctx, task.finding_id))
+    result = await ask(prompt)
+    tokens_in, tokens_out, cost = result.tokens_in, result.tokens_out, result.cost_usd
+    if not result.ok:
+        return fail(result, time.monotonic() - started)
+    parsed = parse(result)
+    if parsed is None:
+        return TaskOutcome(
+            status="failed", exit_reason="schema_invalid", duration_s=time.monotonic() - started
+        )
+    payload, raw_verdict, reason = parsed
+
+    # ---- the re-ask ----
+    # `needs_validation` was terminal, and `EVALUATION.md` §4 showed why that made rejection
+    # arithmetically impossible: four of the prompt's five adversarial checks need code that
+    # was not quoted, and the prompt routes exactly that case here. Nothing re-fetched the
+    # named fact, so every check that could have killed a finding exited as "ask someone
+    # else". The model names the locations; the harness reads them, through the same
+    # containment-checked reader, and asks once more. GLM still gets no filesystem, so the
+    # cross-model independence this design exists for survives.
+    rounds = 1
+    requested: list[str] = []
+    if raw_verdict == "needs_validation":
+        locations = _requested_locations(payload)
+        if locations:
+            extra = _quote(repo, locations, char_budget=_MAX_REASK_CHARS)
+            requested = [f"{rel}:{min(lines)}" for rel, lines in locations]
+            if extra:
+                prompt2, _ = compose(
+                    "## The code you asked for\n\n"
+                    "You returned `needs_validation` and named these locations. They are quoted"
+                    " below. This is the last round: decide on what you now have, and if it is"
+                    " still not enough, say precisely which fact is missing and why this"
+                    " repository cannot answer it.\n\n" + extra
+                )
+                second = await ask(prompt2)
+                tokens_in += second.tokens_in
+                tokens_out += second.tokens_out
+                cost += second.cost_usd
+                if second.ok and (reparsed := parse(second)) is not None:
+                    payload, raw_verdict, reason = reparsed
+                    rounds = 2
+                ctx.db.event(
+                    "validate.reasked",
+                    run_id=task.run_id,
+                    repo_id=task.repo_id,
+                    task_id=task.task_id,
+                    finding_id=finding_id,
+                    locations=requested,
+                    rounds=rounds,
+                    verdict=raw_verdict,
+                )
+
+    duration = time.monotonic() - started
+    verdict, capped = _evidence_ceiling(raw_verdict, _poc_verdict(ctx, finding_id))
     if capped:
         reason = f"{reason}\n\n[harness] {capped}"
         ctx.db.event(
@@ -270,7 +372,7 @@ async def run_validate(ctx: RoleContext, task: Task) -> TaskOutcome:
             repo_id=task.repo_id,
             task_id=task.task_id,
             level="warn",
-            finding_id=task.finding_id,
+            finding_id=finding_id,
             model_verdict=raw_verdict,
             recorded=verdict,
         )
@@ -278,7 +380,7 @@ async def run_validate(ctx: RoleContext, task: Task) -> TaskOutcome:
     ctx.db.record_validation(
         Validation(
             validation_id=new_id("v"),
-            finding_id=task.finding_id,
+            finding_id=finding_id,
             task_id=task.task_id,
             validator="adversarial",
             model=ctx.verify_agent.model or ctx.settings.verify.model,
@@ -290,17 +392,19 @@ async def run_validate(ctx: RoleContext, task: Task) -> TaskOutcome:
                 "missing_fact": payload.get("missing_fact"),
                 "model_verdict": raw_verdict,
                 "capped": capped,
+                "rounds": rounds,
+                "refetched": requested,
             },
         )
     )
-    ctx.db.set_verdict(task.finding_id, _VERDICT_MAP[verdict])
+    ctx.db.set_verdict(finding_id, _VERDICT_MAP[verdict])
 
     return TaskOutcome(
         status="done",
         exit_reason="ok",
         duration_s=duration,
-        tokens_in=result.tokens_in,
-        tokens_out=result.tokens_out,
-        cost_usd=result.cost_usd,
-        detail={"verdict": verdict, "reason": reason[:400]},
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        cost_usd=cost,
+        detail={"verdict": verdict, "reason": reason[:400], "rounds": rounds},
     )

@@ -21,10 +21,15 @@ Repository: `{repo_name}` at `{repo_path}`
 ## How to disprove it
 
 You have no filesystem and no tools. Every line you are allowed to rely on is quoted for
-you under "The cited source" below, with real line numbers. Do not announce a file read,
-do not emit a tool call, and do not ask for more: work from what is in front of you, and
-if the quoted context is genuinely insufficient to decide, say so in `reason` and return
-`needs_validation`.
+you under "The cited source" below, with real line numbers. Do not announce a file read and
+do not emit a tool call.
+
+If the quoted context is genuinely insufficient, you get **one** chance to ask for more:
+return `needs_validation` and list the exact locations in `missing_locations`. The harness
+will read them out of the repository and put the question to you again with that code
+added. There is no second chance, so name everything the verdict turns on at once, and name
+it precisely: a control you suspect exists, the caller you need to see, the middleware you
+think sanitises. Guessing a path costs you the round.
 
 Attack the claim in this order - the first one that lands ends it:
 
@@ -33,7 +38,9 @@ Attack the claim in this order - the first one that lands ends it:
    to make, because you can see the code and the claim side by side.
 2. **Is there a control the hunter missed?** Validation upstream, middleware, a type
    constraint, a caller that already sanitises. If deciding this needs code that was not
-   quoted, that is `needs_validation` with the exact missing location, not a guess.
+   quoted, that is `needs_validation` with the exact missing location in
+   `missing_locations`, not a guess. This is the check that most often kills a real finding,
+   and it is the reason the re-ask exists: ask for the caller.
 3. **Is the attacker real?** Can the named principal actually reach this entrypoint, with
    the access the hunter assumes? Or does reaching it already require the authority the bug
    supposedly grants?
@@ -62,6 +69,7 @@ End your reply with exactly one fenced ```json block:
   "reason": "<2-4 sentences. If disproved, name the specific control, caller, or false claim that kills it, with file:line.>",
   "checks": [{{"question": "<which of the five>", "answer": "<what you found>", "file": "path", "line": 1}}],
   "corrected_severity": "informational|low|medium|high|critical|null",
-  "missing_fact": "<only when needs_validation: the exact fact required, and the safe check that would resolve it>"
+  "missing_fact": "<only when needs_validation: the exact fact required, and the safe check that would resolve it>",
+  "missing_locations": [{{"file": "path/in/this/repo.py", "line": 1}}]
 }}
 ```
