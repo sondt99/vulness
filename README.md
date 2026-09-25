@@ -24,14 +24,16 @@ false positives. A harness fixes that structurally:
 | Context exhaustion | All state in SQLite. Agents are stateless, disposable, and stay under ~25% of their window. |
 | Self-grading | The validator **cannot file findings** - enforced by an AST test, not a prompt. |
 | One model's blind spots | Hunt on Claude, validate on GLM. |
-| "It reviewed the code" ≠ "it found a bug" | Threat model required before filing; PoCs run against read-only source in a sandbox. |
-| A 5-hour run dies at hour 4 | Crash costs the in-flight task only. `--resume` picks up the rest. |
+| "It reviewed the code" ≠ "it found a bug" | Threat model required before filing; PoCs run against read-only source in a sandbox, and a PoC that did not reproduce caps the verdict at `needs_validation`. |
+| A validator that only ever agrees | When it says the deciding code was not quoted, the harness fetches exactly those lines and asks once more. |
+| The target's own agent config | The hunt runs `--restricted --strict-mcp-config`: no CLAUDE.md, no hooks, no MCP from the repository being audited. |
+| A 5-hour run dies at hour 4 | Crash costs the in-flight task only. `--resume` picks up the rest, reclaiming stranded leases. |
 
 ## Install
 
 ```bash
 pip install -e .
-export GLM_API_KEY=...          # Z.AI Coding Plan key
+echo 'GLM_API_KEY=...' > .env   # Z.AI Coding Plan key, or export it; the shell wins
 claude --version                # must be logged in (subscription, not an API key)
 vulness doctor                    # verifies both models + the sandbox before you spend a run
 ```
@@ -50,6 +52,7 @@ vulness findings -v confirmed          # what survived validation
 vulness findings -v rejected           # what the validator killed, and why
 vulness wishlist                       # what agents asked for and did not get
 vulness report -o REPORT.md
+vulness bench                          # score the last run against ground truth
 ```
 
 ## How a run works
@@ -71,7 +74,10 @@ recon ──▶ hunt ──▶ validate ──▶ report
 3. **Gates** run before any validator is paid: a structural check, then a deterministic
    file/line check written in plain Python - models hallucinate line numbers, and a model
    asked to check another model's line numbers hallucinates agreement.
-4. **Validate** hands the finding to GLM with one instruction: *disprove this*.
+4. **Validate** hands the finding to GLM with one instruction: *disprove this*. If GLM
+   answers that the deciding code was never quoted, the harness reads exactly the lines it
+   named and asks once more, then stops. One round, because a model that still cannot
+   decide with the code it chose itself is saying the answer is not in this repository.
 5. **Report** is pure rendering. No model, so the prose and the data cannot disagree.
 
 ## Testing
@@ -81,7 +87,7 @@ Three levels, cheapest first.
 **1. Suite and static gates.** No models, no network, no cost. Run these before every push.
 
 ```bash
-pytest -q                     # 39 tests, under a second
+pytest -q                     # 159 tests, a few seconds
 ruff check vulness/ tests/
 pyright vulness/
 ```
@@ -99,50 +105,39 @@ vulness doctor
 Four checks, and it refuses to dispatch execution tasks if the sandbox fails, because a
 sandbox that silently does not start turns the harness into a very expensive grep.
 
-**3. Calibration against known ground truth.** Costs tokens. This is the only test that
-measures whether the harness is any good.
+**3. Scoring against ground truth.** Costs tokens. This is the only test that measures
+whether the harness is any good.
 
 ```bash
 vulness run tests/fixtures/vulnshop -b 42 --gapfill 1
-vulness findings -v confirmed
+vulness bench --min-recall 0.6 --max-decoys 0
 ```
 
-`tests/fixtures/vulnshop/README.md` lists the planted defects, including one decoy that
-must NOT be reported. A healthy run finds three real bugs and stays silent about the
-decoy. If it reports the decoy, that is a false positive worth an issue.
+`vulness bench` matches findings to labels by file and line and prints precision, recall
+and decoys flagged at three verdict tiers. `--min-recall` and `--max-decoys` make it exit
+non-zero, because a benchmark nothing can fail is a dashboard.
 
-## Calibration
+Ground truth lives in `tests/ground_truth/*.json`, deliberately outside the trees it
+describes. It used to sit in a README at the root of each fixture, which put the answer key
+inside the directory the hunter reads: a table naming the file and line of every defect,
+its severity, and which function was a decoy. `tests/test_decontamination.py` now fails if
+any of it reappears there.
 
-Measured against a target with known ground truth (2 planted bugs + 1 crypto decoy):
-
-- Found the unauthenticated SQL injection, the `../` path traversal, and an auth bypass
-  the author had written by accident.
-- Did **not** flag the planted `hmac.compare_digest` decoy.
-- Two defects this surfaced in vulness itself - attack class splitting one bug into three
-  identities, and `schema_invalid` being treated as fatal - are now regression tests.
-
-## Measured behaviour
-
-Two-repo fleet run against the calibration fixtures, after the scaling work:
-
-| | Cloudflare | vulness |
-|---|---|---|
-| Repos | 128 | 2 |
-| Workers | 50-200 | 6 |
-| Coverage | grid driven to a clean pass | 11/14 cells (79%) |
-| Sibling-fork rate | ~9%, up to ~20% by model | 19% |
-| Peak agent context | under 25% of window | 28% |
-| Stages exercised live | all | recon, hunt, validate, judge, trace, dedup |
-
-Grid size scales with the target: 3 files gives 6 cells, ~600 files gives 81. A flat cap
-previously gave a 102 line fixture the same 80 cell grid as a large service, and 6 of
-those cells were ever reached.
+`benchmarks/` holds corpora imported from published datasets, 692 targets and 1,055 labels
+from SecBench.js and Vul4J. `vulness corpus --help` regenerates them. Scoring a run against
+those still needs the targets checked out and buildable, which is the remaining work.
 
 ## Status
 
-Working: recon, hunt, validate, coverage grid, gapfill, sibling forking, shallow-run
-detection, budget reserve, wishlist, Docker sandbox, report, resume.
+Working: recon, hunt, validate with one re-ask round, coverage grid, gapfill, sibling
+forking, shallow-run detection, budget reserve, wishlist, Docker sandbox, cross-repo trace,
+dedup, judge, chain composition, fixer, report, resume, scoring.
 
-Not built yet, deliberately: cross-repo tracing and a dedicated dedup agent. Cloudflare's
-advice is to skip both until you have more than one repo that matters and are actually
-drowning in noise. See `docs/PLAN.md`.
+Not yet measured honestly. Every run recorded on this box predates the decontamination
+above, so whatever recall it shows was read with the answer key sitting in the tree.
+`vulness bench` scores those runs at 100% recall on vulnshop and 50% on chainshop, and
+neither number means anything until a run happens against the fixtures as they now stand.
+
+`docs/EVALUATION.md` is the honest assessment, including what is built but not
+demonstrated. `docs/RESEARCH.md` is the outside comparison. `docs/PLAN.md` is the
+architecture.
