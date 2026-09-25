@@ -256,6 +256,30 @@ class ClaudeCodeAgent(Agent):
             # worktrees, /tmp) resolves elsewhere and tool calls get denied on the real path.
             argv += ["--add-dir", str(Path(cwd).resolve())]
         tools = allowed_tools if allowed_tools is not None else self.cfg.allowed_tools
+        if self.cfg.isolate_target:
+            # The target repository is untrusted input, and Claude Code loads agent
+            # configuration from the directory it runs in. Measured on a probe target
+            # carrying all three surfaces: the .claude/settings.json SessionStart hook
+            # executed, the .mcp.json server executed, and the CLAUDE.md reached the model's
+            # context. Tool permissions do not contain any of that, because hooks and MCP
+            # servers are a different mechanism from tools.
+            #
+            # --restricted ignores user, project and local settings, keeps CLAUDE.md out of
+            # context, and confines the file tools to the working directories.
+            # --strict-mcp-config drops every MCP configuration not passed on the command
+            # line, and passing none leaves the set empty.
+            #
+            # Not --bare, which the obvious reading of the CLI help suggests: it never reads
+            # OAuth or the keychain, so it would break the subscription auth this backend is
+            # built on and silently demand an API key instead.
+            argv += ["--restricted", "--strict-mcp-config"]
+            # --restricted removes the code-running tools unless --tools names them, and
+            # --allowedTools is not that flag: with Bash(rg:*) allowed but Bash absent from
+            # --tools, the model reported no Bash tool in the session. --tools takes bare
+            # names, so the qualifier comes off here and --allowedTools still constrains
+            # which invocations are permitted.
+            if names := sorted({t.split("(", 1)[0] for t in tools}):
+                argv += ["--tools", ",".join(names)]
         # Variadic flags: these must stay last, and each stops at the next `--` token.
         if tools:
             argv += ["--allowedTools", *tools]

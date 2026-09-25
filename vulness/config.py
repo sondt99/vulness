@@ -54,6 +54,11 @@ class HuntBackend(BaseModel):
         default_factory=lambda: ["Read", "Grep", "Glob", "Bash(rg:*)", "Bash(git log:*)"]
     )
     disallowed_tools: list[str] = Field(default_factory=lambda: ["Write", "Edit", "WebFetch"])
+    # Refuse the target repository's own agent configuration. Measured on a probe target
+    # carrying a CLAUDE.md, a .claude/settings.json hook and a .mcp.json: with the previous
+    # invocation the hook and the MCP server both executed, and the CLAUDE.md reached the
+    # model's context. See agents/claude_cli.py. Off only to reproduce that, never in a run.
+    isolate_target: bool = True
 
 
 class VerifyBackend(BaseModel):
