@@ -13,6 +13,34 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 Profile = Literal["quick", "standard", "deep"]
 
 
+def load_dotenv(path: Path = Path(".env")) -> list[str]:
+    """Put unprefixed keys from a .env file into the process environment.
+
+    `env_prefix="VULNESS_"` below means pydantic-settings reads .env looking only for
+    VULNESS_* names, and VerifyBackend.api_key() reads os.environ directly. So GLM_API_KEY
+    written to .env, which is where .env.example and the README both tell you to put it,
+    reached nothing: `doctor` reported "GLM_API_KEY not set" with the key sitting in the
+    file beside it, and every run that did validate was one where the operator happened to
+    have exported it by hand.
+
+    An already-exported value always wins, so a shell can still override the file. Returns
+    the names set, never the values: these are credentials and nothing may log them.
+    """
+    if not path.exists():
+        return []
+    applied: list[str] = []
+    for raw in path.read_text(errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip().removeprefix("export ").strip(), value.strip().strip("\"'")
+        if key and value and key not in os.environ:
+            os.environ[key] = value
+            applied.append(key)
+    return applied
+
+
 class HuntBackend(BaseModel):
     """Claude Code CLI, driven headless. Subscription auth -- no API key is read or sent."""
 
@@ -112,6 +140,7 @@ class Settings(BaseSettings):
     @classmethod
     def load(cls, path: Path | None = None) -> Settings:
         """Layer fleet.yaml under environment variables."""
+        load_dotenv()
         data: dict = {}
         candidate = path or Path("fleet.yaml")
         if candidate.exists():

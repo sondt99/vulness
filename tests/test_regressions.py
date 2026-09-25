@@ -96,3 +96,36 @@ def test_requeue_depth_is_bounded() -> None:
         task = db.requeue(task, "requeue_error")
         assert _retry_depth(task) == expected
     assert _retry_depth(task) > MAX_ATTEMPTS, "depth must eventually exceed the cap"
+
+
+def test_dotenv_reaches_the_key_the_glm_client_reads(tmp_path, monkeypatch) -> None:
+    """Regression: env_prefix="VULNESS_" means pydantic-settings reads .env looking only
+    for VULNESS_* names, while VerifyBackend.api_key() reads os.environ directly. A key
+    written to .env, which .env.example and the README both tell you to do, reached
+    nothing: doctor reported "GLM_API_KEY not set" with the key in the file beside it."""
+    from vulness.config import VerifyBackend, load_dotenv
+
+    monkeypatch.delenv("GLM_API_KEY", raising=False)
+    env = tmp_path / ".env"
+    env.write_text('# a comment\n\nGLM_API_KEY="from-the-file"\nexport OTHER=2\n')
+
+    assert set(load_dotenv(env)) == {"GLM_API_KEY", "OTHER"}
+    assert VerifyBackend().api_key() == "from-the-file"
+
+
+def test_an_exported_key_beats_the_file(tmp_path, monkeypatch) -> None:
+    """A shell must still be able to override the file, or a stale .env is unfixable."""
+    from vulness.config import VerifyBackend, load_dotenv
+
+    monkeypatch.setenv("GLM_API_KEY", "from-the-shell")
+    env = tmp_path / ".env"
+    env.write_text("GLM_API_KEY=from-the-file\n")
+
+    assert load_dotenv(env) == []
+    assert VerifyBackend().api_key() == "from-the-shell"
+
+
+def test_a_missing_dotenv_is_not_an_error(tmp_path) -> None:
+    from vulness.config import load_dotenv
+
+    assert load_dotenv(tmp_path / "nope") == []
