@@ -101,6 +101,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             "\n[yellow]Sandbox unavailable.[/] Hunts will still run, but PoCs cannot be "
             "executed - findings stay source-only."
         )
+        # A soft warning is right for an operator, who may legitimately want a source-only
+        # run, and useless for CI: exit 0 means nothing can gate on PoC execution actually
+        # being available, and a harness quietly not running any code is the failure
+        # docker.py says doctor exists to catch.
+        if getattr(args, "require_sandbox", False):
+            return 1
     return 0
 
 
@@ -597,9 +603,13 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("-c", "--config", help="path to fleet.yaml")
         return sp
 
-    common(sub.add_parser("doctor", help="check both models and the sandbox")).set_defaults(
-        fn=cmd_doctor
+    dr = common(sub.add_parser("doctor", help="check both models and the sandbox"))
+    dr.add_argument(
+        "--require-sandbox",
+        action="store_true",
+        help="exit non-zero if the sandbox is unavailable, so CI can gate on PoC execution",
     )
+    dr.set_defaults(fn=cmd_doctor)
 
     r = common(sub.add_parser("run", help="audit a repository end to end"))
     r.add_argument(

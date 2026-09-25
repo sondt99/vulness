@@ -8,6 +8,7 @@ and the data to disagree. The report is a view over the database, nothing more.
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from typing import Any
 
@@ -15,6 +16,30 @@ from vulness.state.db import Database
 from vulness.state.models import Finding, now
 
 _SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "informational": 4, "unrated": 5}
+
+# Any run of three or more backticks, which is what ends a fenced block early.
+_FENCE = re.compile(r"`{3,}")
+
+
+def _md(text: Any, limit: int = 2000) -> str:
+    """Model-authored text, made safe to interpolate into a line of Markdown.
+
+    Every string here was written by a model reading a repository this harness does not
+    trust, so it is attacker-influenced in the same sense the source is. The schema enforces
+    a 12-character minimum on a title and nothing about its content. A finding titled with a
+    newline and a `## ` restructures the report; one containing a fence ends the PoC block
+    early and spills the rest as prose.
+
+    Not HTML escaping: the output is Markdown read by people and diffed in git, so the aim
+    is that model text cannot change the document's structure, not that it renders inertly.
+    """
+    flat = " ".join(str(text or "").split())
+    return _FENCE.sub("``", flat)[:limit] or "-"
+
+
+def _fenced(text: Any, limit: int = 600) -> str:
+    """Body for a fenced block. Newlines survive; fences do not."""
+    return _FENCE.sub("``", str(text or "")).strip()[-limit:]
 
 
 def run_stats(db: Database, run_id: str) -> dict[str, Any]:
@@ -79,15 +104,16 @@ def _sev(f: Finding) -> int:
 def _finding_section(db: Database, f: Finding) -> str:
     tm = f.threat_model_json or {}
     lines = [
-        f"### {f.title}",
+        f"### {_md(f.title, 200)}",
         "",
-        f"`{f.fingerprint}` · **{f.severity()}** · {f.attack_class or 'unclassified'} · area `{f.area or '?'}`",
+        f"`{f.fingerprint}` · **{f.severity()}** · {_md(f.attack_class or 'unclassified', 60)}"
+        f" · area `{_md(f.area or '?', 60)}`",
         "",
         "**Threat model**",
         "",
-        f"- Attacker: {tm.get('attacker', '-')}",
-        f"- Boundary crossed: {tm.get('boundary', '-')}",
-        f"- Broken assumption: {tm.get('broken_assumption', '-')}",
+        f"- Attacker: {_md(tm.get('attacker'), 400)}",
+        f"- Boundary crossed: {_md(tm.get('boundary'), 400)}",
+        f"- Broken assumption: {_md(tm.get('broken_assumption'), 400)}",
         "",
     ]
     if f.trace_json:
@@ -95,23 +121,27 @@ def _finding_section(db: Database, f: Finding) -> str:
         for step in f.trace_json:
             if isinstance(step, dict):
                 lines.append(
-                    f"- `{step.get('kind', '?')}` - `{step.get('file', '?')}:{step.get('line', '?')}`"
-                    f" in `{step.get('scope', '?')}` - {step.get('description', '')}"
+                    f"- `{_md(step.get('kind', '?'), 40)}` -"
+                    f" `{_md(step.get('file', '?'), 300)}:{_md(step.get('line', '?'), 20)}`"
+                    f" in `{_md(step.get('scope', '?'), 120)}` - {_md(step.get('description'), 500)}"
                 )
         lines.append("")
     if items := (f.evidence_json or {}).get("items"):
         lines += ["**Evidence**", ""]
         for e in items:
             if isinstance(e, dict):
-                lines.append(f"- `{e.get('file', '?')}:{e.get('line', '?')}` - {e.get('description', '')}")
+                lines.append(
+                    f"- `{_md(e.get('file', '?'), 300)}:{_md(e.get('line', '?'), 20)}`"
+                    f" - {_md(e.get('description'), 500)}"
+                )
         lines.append("")
 
     for v in db.validations_for(f.finding_id):
         icon = {"upheld": "✔", "disproved": "✘", "needs_validation": "?"}.get(v.verdict, "·")
-        lines.append(f"> {icon} **{v.validator}** ({v.model}): {v.reason}")
+        lines.append(f"> {icon} **{v.validator}** ({_md(v.model, 60)}): {_md(v.reason, 1200)}")
         # A PoC that executed is the hardest evidence in the report; show what it printed.
-        if v.validator == "sandbox" and (out := str((v.detail_json or {}).get("stdout", ""))).strip():
-            lines += ["", "```", out.strip()[-600:], "```"]
+        if v.validator == "sandbox" and (out := _fenced((v.detail_json or {}).get("stdout"))):
+            lines += ["", "```", out, "```"]
     lines.append("")
 
     if strategy := (f.remediation_json or {}).get("strategy"):
@@ -207,7 +237,10 @@ def render_report(db: Database, run_id: str) -> str:
             for v in db.validations_for(f.finding_id):
                 if v.detail_json.get("missing_fact"):
                     missing = str(v.detail_json["missing_fact"])
-            out.append(f"- **{f.title}** - {missing or 'missing external fact not specified'}")
+            out.append(
+                f"- **{_md(f.title, 200)}** -"
+                f" {_md(missing or 'missing external fact not specified', 600)}"
+            )
         out.append("")
 
     if rejected:
@@ -217,7 +250,7 @@ def render_report(db: Database, run_id: str) -> str:
                 (v.reason for v in db.validations_for(f.finding_id) if v.verdict == "disproved"),
                 "no reason recorded",
             )
-            out.append(f"- ~~{f.title}~~ - {why}")
+            out.append(f"- ~~{_md(f.title, 200)}~~ - {_md(why, 600)}")
         out.append("")
 
     if chains := [c for c in db.chains(run_id=run_id) if c["verdict"] != "rejected"]:
@@ -240,12 +273,17 @@ def render_report(db: Database, run_id: str) -> str:
             "",
         ]
         for c in sorted(chains, key=lambda x: _SEVERITY_ORDER.get(x["severity"], 5)):
-            out += [f"### {c['title']}", "", f"**{c['severity']}** - {c['terminal_impact']}", ""]
+            out += [
+                f"### {_md(c['title'], 200)}",
+                "",
+                f"**{_md(c['severity'], 40)}** - {_md(c['terminal_impact'], 300)}",
+                "",
+            ]
             if c["preconditions"]:
-                out += [f"Attacker starts with: {c['preconditions']}", ""]
+                out += [f"Attacker starts with: {_md(c['preconditions'], 600)}", ""]
             for i, fid in enumerate(c["steps"], 1):
-                out.append(f"{i}. {by_title.get(fid, fid)}")
-            out += ["", c["narrative"], ""]
+                out.append(f"{i}. {_md(by_title.get(fid, fid), 200)}")
+            out += ["", _md(c["narrative"], 3000), ""]
 
     if wishes := db.open_wishes(run_id):
         out += [
@@ -254,7 +292,11 @@ def render_report(db: Database, run_id: str) -> str:
             "_Agents asked for these and could not proceed without them:_",
             "",
         ]
-        out += [f"- **{w.kind}** - {w.resource} ({w.context_json.get('why', '')})" for w in wishes]
+        out += [
+            f"- **{_md(w.kind, 40)}** - {_md(w.resource, 300)}"
+            f" ({_md(w.context_json.get('why'), 400)})"
+            for w in wishes
+        ]
         out.append("")
 
     out += ["## Run statistics", "", "```json", json.dumps(stats, indent=2), "```", ""]

@@ -88,7 +88,11 @@ class VerifyBackend(BaseModel):
 
 
 class SandboxConfig(BaseModel):
-    backend: Literal["docker", "bwrap", "none"] = "docker"
+    # "bwrap" was advertised here with no bwrap.py behind it. Selecting it left sandbox=None
+    # and degraded every finding in the run to source-only behind a console warning, which is
+    # the exact failure docker.py says doctor exists to prevent. It comes back when the
+    # backend does, not before.
+    backend: Literal["docker", "none"] = "docker"
     # Let hunters run code during the hunt, not only at proof time. Measured across three
     # targets including a Go repository with a working toolchain: hunters invoked it zero
     # times. Claude hunts by reading. The capability stays because it should pay off on

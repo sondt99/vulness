@@ -129,3 +129,29 @@ def test_a_missing_dotenv_is_not_an_error(tmp_path) -> None:
     from vulness.config import load_dotenv
 
     assert load_dotenv(tmp_path / "nope") == []
+
+
+def test_model_text_cannot_restructure_the_report() -> None:
+    """The renderer is model-free but formats model-authored strings into Markdown. Every
+    one of them was written by a model reading a repository this harness does not trust,
+    and the schema enforces a 12-character minimum on a title and nothing about its content.
+    A newline and a heading marker restructure the document; a fence ends the PoC block
+    early and spills the rest of the run as prose."""
+    from vulness.report.render import _fenced, _md
+
+    hostile = "ok\n## Injected heading\n```\nrm -rf /\n```"
+    rendered = _md(hostile)
+    assert "\n" not in rendered
+    assert "```" not in rendered
+
+    body = _fenced("line one\n```\n# escaped out\n")
+    assert "```" not in body
+    assert "line one" in body, "newlines must survive inside a fenced block"
+
+
+def test_md_never_renders_an_empty_field_as_nothing() -> None:
+    """An empty value collapsing to '' leaves `- Attacker: ` with a dangling colon."""
+    from vulness.report.render import _md
+
+    assert _md(None) == "-"
+    assert _md("   ") == "-"

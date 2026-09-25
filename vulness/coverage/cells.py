@@ -50,6 +50,13 @@ COMPANION_MAP: dict[str, str] = {
     "ai-and-llm": "AI-AND-LLM.md",
     "cloud-and-deployment": "CLOUD-AND-DEPLOYMENT.md",
     "resource-and-file-handling": "DATA-ISOLATION-AND-LIFECYCLE.md",
+    # Two builtin classes had no entry, so _companion() returned None for them and a hunter
+    # working a crypto cell got the shared preamble and nothing else. The skill ships no
+    # dedicated companion for either, so these are the closest real coverage rather than an
+    # invented file: WEB-PROTOCOL-AND-AUTH carries the token, MAC and secret-handling
+    # material, and HUNTING carries the state-machine and race reasoning.
+    "crypto-and-secrets": "WEB-PROTOCOL-AND-AUTH.md",
+    "logic-and-state": "HUNTING.md",
 }
 
 # Language hints -> attack classes worth prioritising. Cheap prior, refined by Recon.
