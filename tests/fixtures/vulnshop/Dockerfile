@@ -1,5 +1,3 @@
-# Fixture deployment context. Present so the judge stage can establish that the routes
-# are actually exposed, rather than reporting needs_deployment_fact for everything.
 FROM python:3.12-slim
 WORKDIR /srv
 COPY . /srv

@@ -1,10 +1,10 @@
 """vulnshop application entry point.
 
-Registers every blueprint unconditionally, with no feature flags, so the routes below are
-reachable in any deployment of this app. The fixture needs this: without a wiring point,
-reachability cannot be established from source and the judge stage correctly refuses to
-call anything exploitable.
+Registers every blueprint unconditionally, with no feature flags, so every route below is
+reachable in any deployment of this app.
 """
+import os
+
 from flask import Flask
 
 from api import auth, reports
@@ -13,7 +13,7 @@ from storage import files
 
 def create_app():
     app = Flask(__name__)
-    app.secret_key = "fixture-only-not-a-real-secret"
+    app.secret_key = os.environ["VULNSHOP_SESSION_KEY"]
     app.register_blueprint(reports.bp)
     app.register_blueprint(auth.bp)
     app.register_blueprint(files.bp)

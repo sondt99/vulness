@@ -1,4 +1,4 @@
-"""Session auth. Looks risky, is actually fine -- a decoy for validator calibration."""
+"""Session auth: token minting and verification."""
 import hmac, hashlib, secrets, os
 from flask import Blueprint, request, session
 
@@ -18,7 +18,7 @@ def verify_token(token: str) -> str | None:
     except ValueError:
         return None
     expected = hmac.new(SECRET, f"{user_id}:{nonce}".encode(), hashlib.sha256).hexdigest()
-    # Constant-time compare: not vulnerable to timing attacks.
+    # Constant-time compare.
     if not hmac.compare_digest(expected, mac):
         return None
     return user_id

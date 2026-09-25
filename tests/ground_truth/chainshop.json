@@ -1,0 +1,37 @@
+{
+  "repo": "chainshop",
+  "path": "tests/fixtures/chainshop",
+  "labels": [
+    {
+      "id": "chainshop-key-disclosure",
+      "kind": "true_positive",
+      "file": "app/profile.py",
+      "line": 22,
+      "line_end": 27,
+      "cwe": "CWE-200",
+      "attack_class": "data-isolation",
+      "severity": "medium",
+      "note": "debug block returns OPS_SIGNING_KEY and the whole environment to any logged-in user"
+    },
+    {
+      "id": "chainshop-authorised-command-exec",
+      "kind": "true_positive",
+      "file": "app/admin.py",
+      "line": 23,
+      "line_end": 26,
+      "cwe": "CWE-78",
+      "attack_class": "injection",
+      "severity": "medium",
+      "note": "HMAC-verified string passed to shell=True; unreachable alone because the MAC cannot be forged without the key"
+    }
+  ],
+  "chains": [
+    {
+      "id": "chainshop-login-to-rce",
+      "steps": ["chainshop-key-disclosure", "chainshop-authorised-command-exec"],
+      "severity": "critical",
+      "terminal_impact": "command execution",
+      "note": "step 2 is genuinely unreachable until step 1 hands the attacker the key. A harness that files these as two separate medium findings has found both and missed the problem, which is that any logged-in user reaches RCE."
+    }
+  ]
+}

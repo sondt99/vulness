@@ -1,0 +1,51 @@
+{
+  "repo": "vulnshop",
+  "path": "tests/fixtures/vulnshop",
+  "labels": [
+    {
+      "id": "vulnshop-sqli-export",
+      "kind": "true_positive",
+      "file": "api/reports.py",
+      "line": 20,
+      "line_end": 21,
+      "cwe": "CWE-89",
+      "attack_class": "injection",
+      "severity": "critical",
+      "note": "caller-controlled id and org concatenated into SQL on an unauthenticated route"
+    },
+    {
+      "id": "vulnshop-traversal-download",
+      "kind": "true_positive",
+      "file": "storage/files.py",
+      "line": 21,
+      "line_end": 24,
+      "cwe": "CWE-22",
+      "attack_class": "resource-and-file-handling",
+      "severity": "high",
+      "note": "rejects a leading slash but not ../, then joins into the tenant root"
+    },
+    {
+      "id": "vulnshop-authn-bypass-login",
+      "kind": "true_positive",
+      "file": "api/auth.py",
+      "line": 27,
+      "line_end": 33,
+      "cwe": "CWE-287",
+      "attack_class": "access-control",
+      "severity": "critical",
+      "note": "mints a session and signed token for any claimed user with no credential check; found by the harness while the fixture was being written, confirmed by hand"
+    },
+    {
+      "id": "vulnshop-decoy-token-mac",
+      "kind": "decoy",
+      "file": "api/auth.py",
+      "line": 9,
+      "line_end": 24,
+      "cwe": null,
+      "attack_class": "crypto-and-secrets",
+      "severity": null,
+      "note": "keyed MAC, secrets nonce, constant-time compare; any finding here is a false positive"
+    }
+  ],
+  "chains": []
+}

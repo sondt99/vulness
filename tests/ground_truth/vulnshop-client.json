@@ -1,0 +1,29 @@
+{
+  "repo": "vulnshop-client",
+  "path": "tests/fixtures/vulnshop-client",
+  "labels": [
+    {
+      "id": "client-forwards-injection",
+      "kind": "true_positive",
+      "file": "client/sync.py",
+      "line": 9,
+      "line_end": 16,
+      "cwe": "CWE-89",
+      "attack_class": "injection",
+      "severity": "high",
+      "note": "forwards caller-controlled id and org to the vulnshop endpoint that concatenates them into SQL, so the dependency's injection is reachable from here"
+    },
+    {
+      "id": "client-cache-path-join",
+      "kind": "true_positive",
+      "file": "client/sync.py",
+      "line": 19,
+      "line_end": 24,
+      "cwe": "CWE-22",
+      "attack_class": "resource-and-file-handling",
+      "severity": "medium",
+      "note": "joins an unsanitised name into the cache path"
+    }
+  ],
+  "chains": []
+}
