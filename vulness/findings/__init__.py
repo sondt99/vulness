@@ -1,4 +1,4 @@
-from vulness.findings.fingerprint import compute_fingerprint
+from vulness.findings.fingerprint import compute_fingerprint, primitive_fingerprint
 from vulness.findings.schema import (
     HunterFinding,
     LatentPrimitive,
@@ -14,4 +14,5 @@ __all__ = [
     "candidate_gate",
     "mechanical_check",
     "compute_fingerprint",
+    "primitive_fingerprint",
 ]

@@ -27,6 +27,7 @@ from vulness.findings import (
     candidate_gate,
     compute_fingerprint,
     mechanical_check,
+    primitive_fingerprint,
 )
 from vulness.findings.poc import POC_TO_VALIDATION, execute_poc
 from vulness.prompts import preamble, render
@@ -303,7 +304,7 @@ async def run_hunt(ctx: RoleContext, task: Task) -> TaskOutcome:
             lp = LatentPrimitive(**raw)
         except Exception:
             continue
-        fp = f"lp_{abs(hash((task.repo_id, lp.file, lp.scope, lp.title))) & 0xFFFFFFFFFFFF:012x}"
+        fp = primitive_fingerprint(task.repo_id, lp.file, lp.scope, lp.title)
         if ctx.db.find_prior_finding(task.repo_id, fp) or ctx.db.find_by_fingerprint(
             task.run_id, fp
         ):

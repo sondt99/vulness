@@ -213,9 +213,13 @@ class ClaudeCodeAgent(Agent):
 
     name = "claude-code"
 
-    def __init__(self, cfg: HuntBackend | None = None) -> None:
+    def __init__(self, cfg: HuntBackend | None = None, *, max_concurrent: int | None = None) -> None:
         self.cfg = cfg or HuntBackend()
         self.model = self.cfg.model
+        # The worker pool bounds tasks, not processes. Recon fans out three passes from a
+        # single worker slot, so the pool size was never the real ceiling on concurrent CLIs.
+        # One permit per call, so a fan-out serialises here instead of deadlocking.
+        self._slots = asyncio.Semaphore(max_concurrent) if max_concurrent else None
 
     def _argv(
         self,
@@ -260,6 +264,27 @@ class ClaudeCodeAgent(Agent):
         return argv
 
     async def run(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        cwd: Path | None = None,
+        timeout_s: int | None = None,
+        schema: dict[str, Any] | None = None,
+        allowed_tools: list[str] | None = None,
+    ) -> AgentResult:
+        if self._slots is not None:
+            async with self._slots:
+                return await self._run(
+                    prompt, system=system, cwd=cwd, timeout_s=timeout_s,
+                    schema=schema, allowed_tools=allowed_tools,
+                )
+        return await self._run(
+            prompt, system=system, cwd=cwd, timeout_s=timeout_s,
+            schema=schema, allowed_tools=allowed_tools,
+        )
+
+    async def _run(
         self,
         prompt: str,
         *,

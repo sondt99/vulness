@@ -88,6 +88,8 @@ class Scheduler:
         # Per repo list of changed files for a --since run. Empty means full sweep.
         self.scopes = scopes or {}
         self._gapfill_done = 0
+        # Half the pool idle is the point where topping up beats waiting for a clean drain.
+        self._backfill_watermark = max(1, ctx.settings.budget.max_concurrent_agents // 2)
         self._triage_done = False
         self._feedback_done = 0
         self._stop = asyncio.Event()
@@ -176,6 +178,10 @@ class Scheduler:
     # ---------- the loop ----------
 
     async def run(self, repo_ids: list[str]) -> None:
+        if stranded := self.db.reclaim_leases(self.run_id):
+            self.db.event(
+                "run.leases_reclaimed", run_id=self.run_id, level="warn", tasks=stranded
+            )
         for repo_id in repo_ids:
             if self.db.stage_status(self.run_id, repo_id, "recon") != "done":
                 self.seed_recon(repo_id)
@@ -201,11 +207,18 @@ class Scheduler:
             task = self.db.lease(self.run_id, worker_id, lease_s=_LEASE_SECONDS)
 
             if task is None:
-                # Queue is empty. Before declaring victory, let gapfill look for thin cells.
-                if self.db.pending_count(self.run_id) == 0:
-                    if self._run_gapfill(repo_ids):
-                        idle_rounds = 0
-                        continue
+                pending = self.db.pending_count(self.run_id)
+                # Backfill while the pool is starving, not once it has fully drained. A run
+                # measured here spent 42% of its wall clock at a concurrency of 1 to 2 of 6
+                # because the last few long hunts had to finish before gapfill was allowed to
+                # look. Cells already scheduled are excluded inside _run_gapfill, so firing
+                # early cannot duplicate the seeded grid.
+                if pending < self._backfill_watermark and self._run_gapfill(repo_ids):
+                    idle_rounds = 0
+                    continue
+                # Triage still waits for a truly empty queue: dedup and chain reason over the
+                # complete finding set, and clustering half of it produces the wrong answer.
+                if pending == 0:
                     if self._run_triage(repo_ids):
                         idle_rounds = 0
                         continue
@@ -512,9 +525,12 @@ class Scheduler:
             added += self.enqueue_pending_validations(repo_id)
             prior = self.db.prior_coverage(repo_id)
             yields = self.db.area_yield(repo_id)
+            scheduled = self.db.pending_cell_ids(self.run_id, repo_id)
             for cell in thin_cells(
                 self.db.cells(self.run_id, repo_id), prior=prior, area_yield=yields
             ):
+                if cell.cell_id in scheduled:
+                    continue
                 if not self.budget.can_dispatch(repo_id, "hunt").allowed:
                     break
                 self.db.enqueue(

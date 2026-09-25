@@ -42,8 +42,13 @@ class Budget:
             return BudgetDecision(False, f"per-repo budget exhausted ({self.per_repo} tasks)")
 
         reserve = int(self.per_repo * self.validator_reserve)
-        unvalidated = len(self.db.findings(self.run_id, verdict="candidate", repo_id=repo_id))
-        needed = max(reserve, unvalidated)
+        unvalidated = self.db.count_findings(self.run_id, verdict="candidate", repo_id=repo_id)
+        # The reserve pays for validating what hunting produced, so it is only owed when
+        # something is actually waiting. Holding the floor against an empty backlog strands
+        # the last 30% of every budget: one run abandoned 34 of 59 hunts on the reason
+        # "holding 3 tasks in reserve to validate 0 open candidates". Validation is exempt
+        # from this gate anyway, so a candidate filed by the last hunt still gets paid for.
+        needed = max(reserve, unvalidated) if unvalidated else 0
         if remaining <= needed:
             return BudgetDecision(
                 False,

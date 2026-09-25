@@ -232,13 +232,15 @@ async def _execute(
     from vulness.agents.roles import RoleContext
     from vulness.orchestrator import Scheduler
 
-    hunt = ClaudeCodeAgent(settings.hunt)
+    hunt = ClaudeCodeAgent(settings.hunt, max_concurrent=settings.budget.max_concurrent_agents)
     verify = GLMAgent(settings.verify)
     sandbox = None
     if settings.sandbox.backend == "docker":
         from vulness.sandbox.docker import DockerSandbox
 
-        candidate = DockerSandbox(settings.sandbox)
+        candidate = DockerSandbox(
+            settings.sandbox, max_concurrent=settings.budget.max_concurrent_sandboxes
+        )
         ok, detail = await candidate.doctor()
         if ok:
             sandbox = candidate

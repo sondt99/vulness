@@ -15,7 +15,7 @@ from vulness.coverage.cells import MAX_CELLS, MIN_CELLS, Area, build_grid, grid_
 from vulness.orchestrator.budget import Budget
 from vulness.orchestrator.scheduler import FORK_SHARE_CAP, MAX_FORKS_PER_HUNT, Scheduler
 from vulness.state.db import Database, new_id
-from vulness.state.models import Run, Task
+from vulness.state.models import Cell, Run, Task
 
 
 def test_grid_scales_with_target_size() -> None:
@@ -97,3 +97,55 @@ def test_triage_is_exempt_from_the_hunt_budget() -> None:
     assert not b.can_dispatch("repo", "hunt").allowed
     for kind in ("validate", "judge", "dedup", "fix", "trace", "feedback"):
         assert b.can_dispatch("repo", kind).allowed, f"{kind} must survive budget exhaustion"
+
+
+def _gapfill_sched(db: Database, *, passes: int = 3) -> Scheduler:
+    sched = Scheduler.__new__(Scheduler)
+    sched.db = db
+    sched.run_id = "r"
+    sched.gapfill_passes = passes
+    sched._gapfill_done = 0
+    sched.budget = Budget(db, "r", per_repo=500, validator_reserve=0.3)
+    return sched
+
+
+def _seed_cells(db: Database, n: int) -> list[str]:
+    ids = []
+    for i in range(n):
+        cell = Cell(
+            run_id="r", repo_id="repo", cell_id=f"area{i}::injection",
+            area=f"area{i}", attack_class="injection",
+        )
+        db.upsert_cell(cell)
+        ids.append(cell.cell_id)
+    return ids
+
+
+def test_gapfill_does_not_re_enqueue_cells_already_scheduled() -> None:
+    """Regression: thin_cells() calls a cell virgin until a hunter touches it, which stays
+    true while its task sits in the queue. Gapfill used to be safe only because it ran on an
+    empty queue; now that it backfills early, it must exclude what is already scheduled or
+    it duplicates the entire seeded grid."""
+    db = Database(Path(tempfile.mkdtemp()) / "t.db")
+    db.create_run(Run(run_id="r", model_hunt="m", model_verify="n"))
+    db.upsert_repo("repo", name="repo", path="/tmp")
+    for cell_id in _seed_cells(db, 8):
+        db.enqueue(
+            Task(
+                task_id=new_id("t"), run_id="r", repo_id="repo", stage="hunt", kind="hunt",
+                cell_id=cell_id, origin="seed", prompt="x",
+            )
+        )
+    before = len(list(db.iter_tasks("r")))
+    assert _gapfill_sched(db)._run_gapfill(["repo"]) is False
+    assert len(list(db.iter_tasks("r"))) == before, "gapfill duplicated cells that were already queued"
+
+
+def test_gapfill_fills_cells_once_their_tasks_are_no_longer_pending() -> None:
+    """The other half: once the queue drains, an unhunted cell is real work again."""
+    db = Database(Path(tempfile.mkdtemp()) / "t.db")
+    db.create_run(Run(run_id="r", model_hunt="m", model_verify="n"))
+    db.upsert_repo("repo", name="repo", path="/tmp")
+    _seed_cells(db, 4)
+    assert _gapfill_sched(db)._run_gapfill(["repo"]) is True
+    assert len(list(db.iter_tasks("r"))) == 4

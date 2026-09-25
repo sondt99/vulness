@@ -61,6 +61,11 @@ def run_stats(db: Database, run_id: str) -> dict[str, Any]:
         "cells_covered": covered,
         "coverage_pct": round(100.0 * covered / len(cells), 1) if cells else 0.0,
         "cost_usd": round(sum(t.cost_usd for t in tasks), 4),
+        # Only the hunt backend reports a price; GLM usage is deliberately left unpriced
+        # (see agents/glm.py). Summing the two into one figure reads as the run's cost and
+        # is not, so the renderer says which tasks the number actually covers.
+        "priced_tasks": sum(1 for t in tasks if t.cost_usd),
+        "unpriced_tasks": sum(1 for t in tasks if not t.cost_usd and (t.tokens_in or t.tokens_out)),
         "tokens_in": sum(t.tokens_in for t in tasks),
         "tokens_out": sum(t.tokens_out for t in tasks),
         "wall_time_s": round(sum(t.duration_s or 0.0 for t in tasks), 1),
@@ -140,7 +145,12 @@ def render_report(db: Database, run_id: str) -> str:
         "",
         f"Coverage: **{stats['cells_covered']}/{stats['cells_total']} cells "
         f"({stats['coverage_pct']}%)** · {stats['tasks']} agent tasks · "
-        f"{stats['tokens_in'] + stats['tokens_out']:,} tokens · ${stats['cost_usd']}",
+        f"{stats['tokens_in'] + stats['tokens_out']:,} tokens · ${stats['cost_usd']}"
+        + (
+            f" (hunt backend only; {stats['unpriced_tasks']} validation tasks are unpriced)"
+            if stats["unpriced_tasks"]
+            else ""
+        ),
         "",
     ]
 

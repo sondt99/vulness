@@ -50,6 +50,19 @@ def compute_fingerprint(f: HunterFinding, repo_id: str) -> str:
     return f"fp_{digest}"
 
 
+def primitive_fingerprint(repo_id: str, file: str, scope: str, title: str) -> str:
+    """Stable cross-run identity for a latent primitive.
+
+    sha256 rather than the builtin hash(): hash() on strings is seeded per process, so the
+    same primitive was given a new id on every invocation and the cross-run lookup meant to
+    stop it being re-filed never matched. A primitive exists precisely to be recognised by a
+    run weeks later, which is the one thing a randomised hash cannot do.
+    """
+    parts = [_slug(repo_id), _slug(file), _slug(scope), _title_core(title)]
+    digest = hashlib.sha256("|".join(parts).encode()).hexdigest()[:12]
+    return f"lp_{digest}"
+
+
 def dedup_key(f: HunterFinding, repo_id: str) -> tuple[str, str, str]:
     """Coarser key for the deterministic pre-pass that runs before any dedup agent.
 

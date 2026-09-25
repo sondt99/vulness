@@ -92,8 +92,12 @@ echo "PIDS=$(cat /sys/fs/cgroup/pids.max 2>/dev/null || echo unknown)"
 class DockerSandbox:
     """Runs one command inside a container that cannot reach the network or write the target."""
 
-    def __init__(self, cfg: SandboxConfig) -> None:
+    def __init__(self, cfg: SandboxConfig, *, max_concurrent: int | None = None) -> None:
         self.cfg = cfg
+        # Containers are the heaviest thing this harness starts. PoC execution runs inline
+        # inside a hunt task, so without this the ceiling was however many hunt workers
+        # happened to be executing a PoC, not the configured number.
+        self._slots = asyncio.Semaphore(max_concurrent) if max_concurrent else None
         # Resolve the binary once and invoke it absolutely, so the subprocess never needs a
         # PATH and cannot pick up a `docker` shim that appears on it mid-run.
         self._docker: str | None = shutil.which("docker")
@@ -206,6 +210,25 @@ class DockerSandbox:
         env: Mapping[str, str] | None = None,
     ) -> SandboxResult:
         """Run ``command`` (an argv list) under the policy. Never raises for workload failure."""
+        if self._slots is None:
+            return await self._run(
+                command, target=target, scratch=scratch, limits=limits, image=image, env=env
+            )
+        async with self._slots:
+            return await self._run(
+                command, target=target, scratch=scratch, limits=limits, image=image, env=env
+            )
+
+    async def _run(
+        self,
+        command: Sequence[str],
+        *,
+        target: Path,
+        scratch: Path,
+        limits: SandboxLimits,
+        image: str | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> SandboxResult:
         if self._docker is None:
             return SandboxResult(violation=Violation.LAUNCH_FAILED, stderr="docker not on PATH")
         try:

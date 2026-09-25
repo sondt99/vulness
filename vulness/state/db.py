@@ -216,16 +216,29 @@ class Database:
         """Atomically claim the highest-priority queued task, or reclaim an expired lease."""
         with self._lock:
             clause = ""
-            params: list[Any] = [run_id, now()]
+            kind_params: list[Any] = []
             if kinds:
                 clause = f" AND kind IN ({','.join('?' * len(kinds))})"
-                params.extend(kinds)
+                kind_params = list(kinds)
+            # Two arms instead of one OR across `status`. status is the second column of
+            # idx_tasks_queue, and an OR over it drops the index for the ORDER BY: the
+            # planner falls back to a run_id scan plus a temp B-tree, which is linear in
+            # the size of the run. Every worker pays this on every poll, so at 40k tasks it
+            # was 4.0ms a call against 0.009ms here, enough to saturate the event loop at
+            # the worker counts this harness is meant to reach.
+            arm = (
+                " ORDER BY priority ASC, task_id ASC LIMIT 1)"
+            )
             row = self._conn.execute(
-                "SELECT * FROM tasks WHERE run_id=? AND (status='queued'"
-                " OR (status='leased' AND lease_until IS NOT NULL AND lease_until < ?))"
+                "SELECT * FROM (SELECT * FROM tasks WHERE run_id=? AND status='queued'"
                 + clause
+                + arm
+                + " UNION ALL SELECT * FROM (SELECT * FROM tasks WHERE run_id=?"
+                " AND status='leased' AND lease_until IS NOT NULL AND lease_until < ?"
+                + clause
+                + arm
                 + " ORDER BY priority ASC, task_id ASC LIMIT 1",
-                tuple(params),
+                (run_id, *kind_params, run_id, now(), *kind_params),
             ).fetchone()
             if row is None:
                 return None
@@ -239,6 +252,23 @@ class Database:
             return Task.from_row(
                 self._conn.execute("SELECT * FROM tasks WHERE task_id=?", (row["task_id"],)).fetchone()
             )
+
+    def reclaim_leases(self, run_id: str) -> int:
+        """Return tasks stranded by a dead process to the queue. Call once at startup.
+
+        A lease only lapses after its full term, and pending_count() counts leased rows, so
+        a resume that finds orphans can neither run them nor reach the gapfill and triage
+        gate: every worker busy-polls until the hour is up. Nothing else can legitimately
+        hold a lease at startup, because the orchestrator is single-process by design.
+        """
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE tasks SET status='queued', worker=NULL, lease_until=NULL"
+                " WHERE run_id=? AND status='leased'",
+                (run_id,),
+            )
+            self._conn.commit()
+            return int(cur.rowcount or 0)
 
     def complete_task(
         self,
@@ -313,9 +343,46 @@ class Database:
         )
         return int(row["c"]) if row else 0
 
+    def pending_cell_ids(self, run_id: str, repo_id: str | None = None) -> set[str]:
+        """Cells that already have a hunt queued or in flight.
+
+        thin_cells() reports a cell as virgin until a hunter has actually touched it, which
+        stays true for the whole time its task sits in the queue. Gapfill therefore has to
+        exclude what is already scheduled, or it re-enqueues the entire seeded grid.
+        """
+        sql = (
+            "SELECT DISTINCT cell_id FROM tasks WHERE run_id=? AND cell_id IS NOT NULL"
+            " AND status IN ('queued','leased')"
+        )
+        params: tuple = (run_id,)
+        if repo_id:
+            sql += " AND repo_id=?"
+            params += (repo_id,)
+        return {r["cell_id"] for r in self.query(sql, params)}
+
     def spent_tasks(self, run_id: str, repo_id: str | None = None) -> int:
         sql = "SELECT COUNT(*) c FROM tasks WHERE run_id=? AND status NOT IN ('queued','abandoned')"
         params: tuple = (run_id,)
+        if repo_id:
+            sql += " AND repo_id=?"
+            params += (repo_id,)
+        row = self.one(sql, params)
+        return int(row["c"]) if row else 0
+
+    def count_findings(
+        self, run_id: str, verdict: str | None = None, repo_id: str | None = None
+    ) -> int:
+        """Count without hydrating.
+
+        The budget gate asks this on every hunt dispatch. Going through findings() built a
+        Finding per row and parsed six JSON columns to reach len(): 3.5ms against 0.014ms
+        with 150 open candidates, on the event loop, blocking every other worker.
+        """
+        sql = "SELECT COUNT(*) c FROM findings WHERE run_id=?"
+        params: tuple = (run_id,)
+        if verdict:
+            sql += " AND verdict=?"
+            params += (verdict,)
         if repo_id:
             sql += " AND repo_id=?"
             params += (repo_id,)
